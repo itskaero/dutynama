@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>DutyNama — PGR Duty Roster</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    /* Date picker dark fix */
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) brightness(.7); cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loading-overlay" class="loading-overlay hidden">
+  <div class="loading-inner">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Loading…</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     AUTH SCREEN
+════════════════════════════════════════════════════════ -->
+<div id="auth-screen" class="screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <span class="logo-icon">🏥</span>
+      <h1>DutyNama</h1>
+      <p>PGR Duty Roster Management</p>
+    </div>
+
+    <!-- Mode: Login -->
+    <div id="auth-mode-login" class="auth-mode active">
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="your@email.com" autocomplete="username" />
+      <label>PIN
+        <button type="button" class="pin-toggle" onclick="Auth.togglePIN('login-pin', this)">👁</button>
+      </label>
+      <input type="password" id="login-pin" maxlength="6" placeholder="4–6 digit PIN" autocomplete="current-password" />
+      <button id="btn-login" class="btn btn-primary" onclick="Auth.login()">Login</button>
+      <div class="auth-divider">New here?</div>
+      <button class="btn btn-ghost" onclick="Auth.showSetup()">Setup Account (I was invited)</button>
+    </div>
+
+    <!-- Mode: Setup Account (invited user sets PIN) -->
+    <div id="auth-mode-setup" class="auth-mode">
+      <h3>Setup Your Account</h3>
+      <p class="auth-hint">Enter the email your Senior PGR used to invite you, then choose a PIN.</p>
+      <label>Email</label>
+      <input type="email" id="setup-email" placeholder="your@email.com" autocomplete="username" />
+      <label>New PIN (4–6 digits)
+        <button type="button" class="pin-toggle" onclick="Auth.togglePIN('setup-pin', this)">👁</button>
+      </label>
+      <input type="password" id="setup-pin" maxlength="6" placeholder="Choose PIN" autocomplete="new-password" />
+      <label>Confirm PIN</label>
+      <input type="password" id="setup-confirm" maxlength="6" placeholder="Confirm PIN" autocomplete="new-password" />
+      <button id="btn-setup" class="btn btn-primary" onclick="Auth.setupAccount()">Create Account</button>
+      <button class="btn btn-ghost" onclick="Auth.showLogin()">← Back to Login</button>
+    </div>
+
+    <!-- Mode: Initial Setup (first ever run) -->
+    <div id="auth-mode-init" class="auth-mode">
+      <h3>Welcome to DutyNama</h3>
+      <p class="auth-hint">No accounts yet. Create the Senior PGR admin account to get started.</p>
+      <label>Your Name</label>
+      <input type="text" id="init-name" placeholder="Dr. Full Name" />
+      <label>Email</label>
+      <input type="email" id="init-email" placeholder="your@email.com" autocomplete="username" />
+      <label>PIN (4–6 digits)
+        <button type="button" class="pin-toggle" onclick="Auth.togglePIN('init-pin', this)">👁</button>
+      </label>
+      <input type="password" id="init-pin" maxlength="6" placeholder="Choose PIN" autocomplete="new-password" />
+      <label>Confirm PIN</label>
+      <input type="password" id="init-confirm" maxlength="6" placeholder="Confirm PIN" autocomplete="new-password" />
+      <button id="btn-init" class="btn btn-primary" onclick="Auth.initialSetup()">Create Admin Account</button>
+    </div>
+
+    <div id="auth-message" class="auth-message"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     MAIN APP
+════════════════════════════════════════════════════════ -->
+<div id="app-screen" class="screen">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo-sm">🏥 DutyNama</span>
+      <span id="current-month-label" class="month-label"></span>
+    </div>
+    <div class="topbar-center">
+      <nav class="tab-nav" id="main-nav"></nav>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-sm btn-ghost" onclick="UI.openAlerts()">
+        🔔 Alerts <span id="alert-badge" class="badge hidden">0</span>
+      </button>
+      <div class="user-chip" id="user-chip"></div>
+      <button class="btn btn-sm btn-danger" onclick="Auth.logout()">Logout</button>
+    </div>
+  </header>
+
+  <!-- Alert Panel (slide-in) -->
+  <div id="alert-panel" class="side-panel hidden">
+    <div class="panel-header">
+      <h3>Alerts</h3>
+      <button class="btn btn-sm btn-ghost" onclick="UI.closeAlerts()">✕</button>
+    </div>
+    <div id="alert-list" class="alert-list"></div>
+    <button class="btn btn-sm btn-ghost" style="margin:1rem" onclick="(async()=>{await DB.clearAlerts();UI.refreshAlerts()})();">Clear All</button>
+  </div>
+  <div id="overlay" class="overlay hidden" onclick="UI.closeAll()"></div>
+
+  <!-- ── PAGES ─────────────────────────────────────────── -->
+
+  <!-- DASHBOARD -->
+  <section id="page-dashboard" class="page active">
+    <div class="page-inner">
+      <h2>Dashboard</h2>
+
+      <div class="cards-row" id="today-cards">
+        <!-- injected by dashboard.js -->
+      </div>
+
+      <div class="section-heading">Today's Duty — <span id="today-date-label"></span></div>
+      <div id="today-duty-table"></div>
+
+      <div class="section-heading">Monthly Stats</div>
+      <div id="monthly-stats-table"></div>
+
+      <div class="section-heading">Overwork Indicators</div>
+      <div id="overwork-indicators"></div>
+    </div>
+  </section>
+
+  <!-- ROSTER -->
+  <section id="page-roster" class="page">
+    <div class="page-inner">
+      <div class="page-toolbar">
+        <h2>Roster</h2>
+        <div class="toolbar-actions">
+          <button class="btn btn-sm btn-secondary" onclick="RosterEngine.prevMonth()">◀ Prev</button>
+          <span id="roster-month-label" class="month-badge"></span>
+          <button class="btn btn-sm btn-secondary" onclick="RosterEngine.nextMonth()">Next ▶</button>
+          <button class="btn btn-primary btn-sm" id="btn-auto-roster" onclick="RosterEngine.autoGenerate()">⚡ Auto-Generate</button>
+          <button class="btn btn-sm btn-secondary" id="btn-export" onclick="RosterEngine.exportCSV()">⬇ Export CSV</button>
+        </div>
+      </div>
+
+      <!-- Legend -->
+      <div class="legend-row">
+        <span class="legend-chip morning">M</span> Morning
+        <span class="legend-chip evening">E</span> Evening
+        <span class="legend-chip night">N</span> Night
+        <span class="legend-chip leave">L</span> Leave
+        <span class="legend-chip off">OFF</span>
+        <span class="legend-chip replaced">R</span> Replaced
+      </div>
+
+      <div id="roster-calendar" class="roster-calendar"></div>
+    </div>
+  </section>
+
+  <!-- DAY DETAIL MODAL (inside roster) -->
+  <div id="day-modal" class="modal hidden">
+    <div class="modal-box large">
+      <div class="modal-header">
+        <h3 id="day-modal-title">Day Detail</h3>
+        <button class="btn btn-sm btn-ghost" onclick="UI.closeDayModal()">✕</button>
+      </div>
+      <div id="day-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- LEAVE MANAGEMENT -->
+  <section id="page-leaves" class="page">
+    <div class="page-inner">
+      <h2>Leave Management</h2>
+      <div id="leave-admin-section"></div>
+      <div id="leave-my-section"></div>
+    </div>
+  </section>
+
+  <!-- PREFERENCES -->
+  <section id="page-preferences" class="page">
+    <div class="page-inner">
+      <h2>My Preferences</h2>
+      <p class="muted">Mark preferred off-days. Violations will raise warnings only.</p>
+      <div id="pref-calendar" class="pref-calendar"></div>
+      <button class="btn btn-primary" onclick="Preferences.save()">Save Preferences</button>
+    </div>
+  </section>
+
+  <!-- ADMIN (Senior PGR and Senior Resident) -->
+  <section id="page-admin" class="page">
+    <div class="page-inner">
+      <h2>Admin Panel</h2>
+      <div class="admin-grid">
+        <!-- PGR Management (senior_pgr only; senior_resident gets replaced via JS) -->
+        <div class="admin-card">
+          <h3>PGR List</h3>
+          <div id="pgr-list-table"></div>
+        </div>
+        <!-- Pending Invites -->
+        <div id="pending-invites-section"></div>
+        <!-- Unit Configuration -->
+        <div class="admin-card">
+          <h3>Units / Bays</h3>
+          <div id="unit-list"></div>
+          <div class="inline-form">
+            <input type="text" id="new-unit-name" placeholder="Unit name" />
+            <button class="btn btn-primary btn-sm" onclick="Admin.addUnit()">Add</button>
+          </div>
+        </div>
+        <!-- Shift Config -->
+        <div class="admin-card">
+          <h3>Shift Settings</h3>
+          <label>Mode</label>
+          <select id="shift-mode-select" onchange="Admin.saveShiftMode()">
+            <option value="3">3 Shifts (M/E/N)</option>
+            <option value="2">2 Shifts (Day/Night)</option>
+          </select>
+          <label>Max Bays per PGR (default)</label>
+          <input type="number" id="max-bays-input" min="1" max="10" value="2" onchange="Admin.saveMaxBays()" />
+          <label>Min duties/month per PGR</label>
+          <input type="number" id="min-duties-input" min="1" max="31" value="8" onchange="Admin.saveMinDuties()" />
+        </div>
+        <!-- Replacement Log -->
+        <div class="admin-card">
+          <h3>Replacement Log</h3>
+          <div id="replacement-log"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EDIT PGR MODAL (for editing existing users) -->
+  <div id="pgr-modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="pgr-modal-title">Edit PGR</h3>
+        <button class="btn btn-sm btn-ghost" onclick="Admin.closePGRModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <label>Name</label>
+        <input type="text" id="pgr-name-input" />
+        <label>Email</label>
+        <input type="email" id="pgr-email-input" readonly style="opacity:.6" />
+        <label>Role</label>
+        <select id="pgr-role-input">
+          <option value="pgr">PGR</option>
+          <option value="senior_pgr">Senior PGR</option>
+          <option value="senior_resident">Senior Resident</option>
+          <option value="viewer">Viewer</option>
+        </select>
+        <label>Min Duties / Month</label>
+        <input type="number" id="pgr-min-duties-input" min="0" max="31" value="8" />
+        <input type="hidden" id="pgr-edit-id" />
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="Admin.savePGR()">Save</button>
+        <button class="btn btn-ghost" onclick="Admin.closePGRModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHANGE PIN MODAL -->
+  <div id="chpin-modal" class="modal hidden">
+    <div class="modal-box" style="max-width:360px">
+      <div class="modal-header">
+        <h3>Change PIN</h3>
+        <button class="btn btn-sm btn-ghost" onclick="UI.closeChangePinModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <label>Current PIN</label>
+        <input type="password" id="chpin-current" maxlength="6" placeholder="Current PIN" />
+        <label>New PIN (4–6 digits)</label>
+        <input type="password" id="chpin-new" maxlength="6" placeholder="New PIN" />
+        <label>Confirm New PIN</label>
+        <input type="password" id="chpin-confirm" maxlength="6" placeholder="Confirm PIN" />
+      </div>
+      <div class="modal-footer">
+        <button id="btn-chpin" class="btn btn-primary" onclick="Auth.changePin()">Change PIN</button>
+        <button class="btn btn-ghost" onclick="UI.closeChangePinModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app-screen -->
+
+<!-- Firebase v10 compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<!-- Firebase project config (fill in YOUR values) -->
+<script src="firebase-config.js"></script>
+<!-- App modules -->
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/validationEngine.js"></script>
+<script src="js/leaveManager.js"></script>
+<script src="js/rosterEngine.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/preferences.js"></script>
+<script src="js/admin.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

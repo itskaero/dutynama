@@ -1,0 +1,21 @@
+# ── Node / package managers ────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log
+
+# ── IDE / OS ───────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Firebase CLI ───────────────────────────────────────────────
+.firebase/
+.firebaserc
+# firebase.json is intentionally NOT ignored — it's needed for CI deploy
+
+# ── DO NOT commit a firebase-config.js with real credentials ───
+# The file in this repo uses YOUR_API_KEY placeholders (safe to commit).
+# CI injects real values from GitHub Secrets at deploy time.
+# If you ever fill in real values locally, add the patched copy here:
+# firebase-config.local.js
