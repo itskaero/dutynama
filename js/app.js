@@ -19,36 +19,55 @@ const App = (() => {
   // ── Called after Firebase Auth confirms a logged-in user ──
   async function _afterFirebaseLogin(firebaseUser) {
     _showLoading('Loading your data…');
+
+    // Hard timeout — Firebase Firestore can buffer requests silently when the
+    // project is unreachable, causing the UI to hang indefinitely.
+    let _timeoutId;
+    const _timeout = new Promise((_, reject) => {
+      _timeoutId = setTimeout(
+        () => reject(new Error('Connection timed out. Check your network and Firebase project settings.')),
+        20000
+      );
+    });
+
     try {
-      // Load Firestore profile — retry a few times to handle the race where
-      // onAuthStateChanged fires before the initial-setup writes complete.
-      let snap = null;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        snap = await firebase.firestore().collection('users').doc(firebaseUser.uid).get();
-        if (snap.exists) break;
-        await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
-      }
-      if (!snap.exists) {
-        // Profile still missing after retries — sign out and show login
-        await firebase.auth().signOut();
-        _hideLoading();
-        Auth.showLogin();
-        return;
-      }
-      const profile = snap.data();
-      profile.id  = profile.uid || firebaseUser.uid;
-      profile.uid = profile.id;
-      Auth.setProfile(profile);
-
-      // Load all data into cache
-      await DB.init();
-
-      onLogin(profile);
+      await Promise.race([_doAfterLogin(firebaseUser), _timeout]);
     } catch (e) {
-      console.error('[DutyNama] Error loading profile:', e);
+      console.error('[DutyNama] Login error:', e.code || '', e.message);
       _hideLoading();
       Auth.showLogin();
+      Auth.showAuthError(e.message || 'Failed to load. Please try again.');
+    } finally {
+      clearTimeout(_timeoutId);
     }
+  }
+
+  async function _doAfterLogin(firebaseUser) {
+    // Load Firestore profile — retry a few times to handle the race where
+    // onAuthStateChanged fires before the initial-setup writes complete.
+    let snap = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      snap = await firebase.firestore().collection('users').doc(firebaseUser.uid).get();
+      if (snap.exists) break;
+      await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+    }
+    if (!snap.exists) {
+      // Profile still missing after retries — sign out and show login
+      await firebase.auth().signOut();
+      _hideLoading();
+      Auth.showLogin();
+      Auth.showAuthError('Account setup incomplete. Please create your account again.');
+      return;
+    }
+    const profile = snap.data();
+    profile.id  = profile.uid || firebaseUser.uid;
+    profile.uid = profile.id;
+    Auth.setProfile(profile);
+
+    // Load all data into cache
+    await DB.init();
+
+    onLogin(profile);
   }
 
   // ── App init (entry point) ────────────────────────────────
@@ -69,16 +88,14 @@ const App = (() => {
             Auth.showInitialSetup();
           }
         } catch (e) {
-          console.warn('[DutyNama] Firestore check failed:', e.code, e.message);
-          // 'unavailable'       → client is offline / can't reach Firestore
-          // 'permission-denied' → rules require auth (app already configured)
-          // In both cases the app is most likely set up → show login.
-          // Only fall back to init setup for unexpected errors (e.g. wrong project ID
-          // that still reaches the server and returns 'not-found' at the project level).
           const code = e.code || '';
-          if (code === 'unavailable' || code === 'permission-denied') {
+          // 'permission-denied' → Firestore rules require auth = app is already configured → login
+          // 'unavailable'       → client offline → assume configured → login
+          // anything else       → unexpected (bad project config etc.) → show init setup
+          if (code === 'permission-denied' || code === 'unavailable') {
             Auth.showLogin();
           } else {
+            console.warn('[DutyNama] Firestore check failed:', code, e.message);
             Auth.showInitialSetup();
           }
         }
@@ -94,10 +111,15 @@ const App = (() => {
     document.getElementById('app-screen').classList.add('active');
     _hideLoading();
 
-    UI.setUserChip(profile);
-    UI.buildNav(profile.role);
-    UI.navigate('dashboard');
-    UI.refreshAlerts();
+    try {
+      UI.setUserChip(profile);
+      UI.buildNav(profile.role);
+      UI.navigate('dashboard');
+      UI.refreshAlerts();
+    } catch (e) {
+      console.error('[DutyNama] UI render error after login:', e);
+      // App is still functional — non-fatal render errors shouldn't block the user
+    }
   }
 
   function onLogout() {

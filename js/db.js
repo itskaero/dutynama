@@ -38,14 +38,15 @@ const DB = (() => {
     const cfgSnap = await fs().doc('config/main').get();
     C.config = cfgSnap.exists ? cfgSnap.data() : _defaultConfig();
 
-    // All parallel fetches
+    // All parallel fetches (alerts loaded without orderBy to avoid index delays;
+    // sorted client-side in getAlerts())
     const [usersSnap, rosterSnap, leavesSnap, prefsSnap, alertsSnap, cfwdSnap] =
       await Promise.all([
         fs().collection('users').get(),
         fs().collection('roster').get(),
         fs().collection('leaves').get(),
         fs().collection('prefs').get(),
-        fs().collection('alerts').orderBy('date', 'desc').limit(200).get(),
+        fs().collection('alerts').limit(200).get(),
         fs().collection('carryFwd').get(),
       ]);
 
@@ -59,22 +60,25 @@ const DB = (() => {
 
     // Real-time listeners
     _unsubs.push(
-      fs().collection('users').onSnapshot(s => {
-        C.users = s.docs.map(_norm);
-        UI.refreshAlerts?.();
-      }),
-      fs().collection('roster').onSnapshot(s => {
-        C.roster = s.docs.map(d => d.data());
-        // Refresh visible page if roster is open
-        if (typeof RosterEngine !== 'undefined') RosterEngine.refreshIfActive?.();
-      }),
-      fs().collection('leaves').onSnapshot(s => {
-        C.leaves = s.docs.map(d => d.data());
-      }),
-      fs().collection('alerts').orderBy('date','desc').limit(200).onSnapshot(s => {
-        C.alerts = s.docs.map(d => d.data());
-        UI.refreshAlerts?.();
-      }),
+      fs().collection('users').onSnapshot(
+        s => { C.users = s.docs.map(_norm); UI.refreshAlerts?.(); },
+        e => console.error('[DB] users listener error:', e)
+      ),
+      fs().collection('roster').onSnapshot(
+        s => {
+          C.roster = s.docs.map(d => d.data());
+          if (typeof RosterEngine !== 'undefined') RosterEngine.refreshIfActive?.();
+        },
+        e => console.error('[DB] roster listener error:', e)
+      ),
+      fs().collection('leaves').onSnapshot(
+        s => { C.leaves = s.docs.map(d => d.data()); },
+        e => console.error('[DB] leaves listener error:', e)
+      ),
+      fs().collection('alerts').limit(200).onSnapshot(
+        s => { C.alerts = s.docs.map(d => d.data()); UI.refreshAlerts?.(); },
+        e => console.error('[DB] alerts listener error:', e)
+      ),
     );
   }
 
@@ -277,7 +281,8 @@ const DB = (() => {
   }
 
   // ── ALERTS ─────────────────────────────────────────────
-  function getAlerts()       { return C.alerts; }
+  // Sorted newest-first client-side (avoids requiring a Firestore index)
+  function getAlerts()       { return [...C.alerts].sort((a, b) => b.date.localeCompare(a.date)); }
   function unseenAlertCount(){ return C.alerts.filter(a => !a.seen).length; }
 
   function addAlert(type, message) {

@@ -57,9 +57,9 @@ const Auth = (() => {
     _setMsg('');
   }
 
-  function showLogin()        { _setMode('login'); }
-  function showSetup()        { _setMode('setup'); }
-  function showInitialSetup() { _setMode('init');  }
+  function showLogin()        { _setBtnLoading('btn-login', false, 'Login');          _setMode('login'); }
+  function showSetup()        { _setBtnLoading('btn-setup',  false, 'Create Account'); _setMode('setup'); }
+  function showInitialSetup() { _setBtnLoading('btn-init',   false, 'Create Admin Account'); _setMode('init'); }
 
   // ── Login ─────────────────────────────────────────────────
   async function login() {
@@ -229,9 +229,12 @@ const Auth = (() => {
     btn.textContent = show ? '🙈' : '👁';
   }
 
+  // Allow app.js to surface errors on the auth screen
+  function showAuthError(msg) { _setMsg(msg, true); }
+
   return {
     showLogin, showSetup, showInitialSetup,
     login, setupAccount, initialSetup, logout, changePin,
-    setProfile, currentUser, can, togglePIN,
+    setProfile, currentUser, can, togglePIN, showAuthError,
   };
 })();
