@@ -27,27 +27,48 @@ const Admin = (() => {
 
   // ── PGR List (Senior PGR only) ────────────────────────
   function renderPGRList() {
+    const me   = Auth.currentUser();
     const pgrs = DB.getPGRs();
     let html = `
       <div class="section-heading">Team Members</div>
       <div class="admin-card">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Min Duties</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Year</th><th>Min Duties</th><th>Actions</th></tr></thead>
           <tbody>`;
     pgrs.forEach(pgr => {
+      const isSelf        = pgr.id === me?.id;
+      const canTransfer   = !isSelf && pgr.role !== 'senior_pgr';
       html += `<tr>
-        <td>${pgr.name}</td>
+        <td>${pgr.name}${isSelf ? ' <span class="muted">(you)</span>' : ''}</td>
         <td>${pgr.email}</td>
         <td><span class="role-badge role-${pgr.role}">${pgr.role.replace(/_/g,' ')}</span></td>
-        <td>${pgr.minDuties ?? DB.getConfig().minDutiesPerMonth}</td>
+        <td>${pgr.year ? 'Y' + pgr.year : '—'}</td>
+        <td>${DB.getEffectiveMinDuties(pgr)}</td>
         <td>
           <button class="btn btn-xs btn-secondary" onclick="Admin.openEditPGR('${pgr.id}')">Edit</button>
-          <button class="btn btn-xs btn-danger"    onclick="Admin.deletePGR('${pgr.id}')">Remove</button>
+          ${canTransfer ? `<button class="btn btn-xs btn-warn" onclick="Admin.transferAdmin('${pgr.id}')">Make Admin</button>` : ''}
+          ${!isSelf ? `<button class="btn btn-xs btn-danger" onclick="Admin.deletePGR('${pgr.id}')">Remove</button>` : ''}
         </td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
     document.getElementById('pgr-list-table').innerHTML = html;
+  }
+
+  // ── Transfer admin to another PGR ────────────────────
+  async function transferAdmin(targetId) {
+    const target = DB.getPGR(targetId);
+    if (!target) return;
+    const me = Auth.currentUser();
+    if (!confirm(`Make ${target.name} the new Senior PGR?\n\nYour role will be changed to PGR. You will no longer have admin access.`)) return;
+
+    // Promote target
+    await DB.upsertPGR({ ...target, role: 'senior_pgr' });
+    // Demote self
+    if (me) await DB.upsertPGR({ ...DB.getPGR(me.id), role: 'pgr' });
+
+    alert(`${target.name} is now Senior PGR. You have been demoted to PGR.\nPlease log out and back in for changes to take effect.`);
+    renderPGRList();
   }
 
   // ── Pending Invites ───────────────────────────────────
@@ -59,13 +80,17 @@ const Admin = (() => {
         <div class="invite-form">
           <input type="text"  id="inv-name"  placeholder="Full name"   />
           <input type="email" id="inv-email" placeholder="Email address" />
-          <select id="inv-role">
+          <select id="inv-role" onchange="Admin._onInviteRoleChange()">
             <option value="pgr">PGR</option>
             <option value="senior_pgr">Senior PGR</option>
             <option value="senior_resident">Senior Resident</option>
             <option value="viewer">Viewer</option>
           </select>
-          <input type="number" id="inv-duties" placeholder="Min duties" value="8" min="0" max="31" style="width:100px" />
+          <select id="inv-year" title="PGR year of training">
+            <option value="">Year —</option>
+            ${DB.getYears().map(y => `<option value="${y}">Year ${y}</option>`).join('')}
+          </select>
+          <input type="number" id="inv-duties" placeholder="Min duties" min="0" max="31" style="width:100px" />
           <button class="btn btn-primary btn-sm" onclick="Admin.sendInvite()">Send Invite</button>
         </div>`;
 
@@ -90,11 +115,24 @@ const Admin = (() => {
     document.getElementById('pending-invites-section').innerHTML = html;
   }
 
+  // Auto-fill min duties when year changes on invite form
+  function _onInviteRoleChange() {
+    const year = parseInt(document.getElementById('inv-year')?.value) || 0;
+    if (!year) return;
+    const yd  = DB.getConfig().yearMinDuties || {};
+    const inp = document.getElementById('inv-duties');
+    if (inp && !inp.value) inp.value = yd[year] ?? DB.getConfig().minDutiesPerMonth;
+  }
+
   async function sendInvite() {
     const name      = document.getElementById('inv-name').value.trim();
     const email     = document.getElementById('inv-email').value.trim().toLowerCase();
     const role      = document.getElementById('inv-role').value;
-    const minDuties = parseInt(document.getElementById('inv-duties').value) || 8;
+    const year      = parseInt(document.getElementById('inv-year').value) || null;
+    const cfg       = DB.getConfig();
+    const yd        = cfg.yearMinDuties || {};
+    const defaultMin = year ? (yd[year] ?? cfg.minDutiesPerMonth) : cfg.minDutiesPerMonth;
+    const minDuties = parseInt(document.getElementById('inv-duties').value) || defaultMin;
 
     if (!name || !email) { alert('Name and email required.'); return; }
     if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) { alert('Invalid email.'); return; }
@@ -109,7 +147,7 @@ const Admin = (() => {
 
     try {
       await DB.addPendingUser({
-        name, email, role, minDuties,
+        name, email, role, year, minDuties,
         createdBy: Auth.currentUser()?.uid || '',
       });
       document.getElementById('inv-name').value  = '';
@@ -135,7 +173,13 @@ const Admin = (() => {
     document.getElementById('pgr-name-input').value        = pgr.name;
     document.getElementById('pgr-email-input').value       = pgr.email;
     document.getElementById('pgr-role-input').value        = pgr.role;
-    document.getElementById('pgr-min-duties-input').value  = pgr.minDuties ?? DB.getConfig().minDutiesPerMonth;
+    document.getElementById('pgr-year-input').value        = pgr.year || '';
+    // Rebuild year options in case numYears changed since modal was last opened
+    const yearSel = document.getElementById('pgr-year-input');
+    yearSel.innerHTML = '<option value="">Not set</option>' +
+      DB.getYears().map(y => `<option value="${y}">Year ${y}</option>`).join('');
+    yearSel.value = pgr.year || '';
+    document.getElementById('pgr-min-duties-input').value  = pgr.minDuties ?? DB.getEffectiveMinDuties(pgr);
     document.getElementById('pgr-edit-id').value           = pgr.id;
     document.getElementById('pgr-modal').classList.remove('hidden');
     document.getElementById('overlay').classList.remove('hidden');
@@ -149,13 +193,14 @@ const Admin = (() => {
   async function savePGR() {
     const name      = document.getElementById('pgr-name-input').value.trim();
     const role      = document.getElementById('pgr-role-input').value;
-    const minDuties = parseInt(document.getElementById('pgr-min-duties-input').value) || 8;
+    const year      = parseInt(document.getElementById('pgr-year-input').value) || null;
+    const minDuties = parseInt(document.getElementById('pgr-min-duties-input').value) ?? null;
     const editId    = document.getElementById('pgr-edit-id').value;
 
     if (!name) { alert('Name required.'); return; }
     if (!editId) { alert('No user selected for editing.'); return; }
 
-    const pgr = { ...DB.getPGR(editId), name, role, minDuties };
+    const pgr = { ...DB.getPGR(editId), name, role, year, minDuties };
     await DB.upsertPGR(pgr);
     closePGRModal();
     renderPGRList();
@@ -205,10 +250,47 @@ const Admin = (() => {
 
   // ── Shift settings ────────────────────────────────────
   function renderShiftSettings() {
-    const cfg = DB.getConfig();
+    const cfg   = DB.getConfig();
+    const years = DB.getYears();
     document.getElementById('shift-mode-select').value = cfg.shiftMode;
     document.getElementById('max-bays-input').value    = cfg.maxBaysPerPGR;
     document.getElementById('min-duties-input').value  = cfg.minDutiesPerMonth;
+    document.getElementById('num-years-input').value   = cfg.numYears || 4;
+    // Build per-year duty inputs dynamically
+    const yd  = cfg.yearMinDuties || {};
+    const box = document.getElementById('year-duties-container');
+    if (box) {
+      box.innerHTML = years.map(y =>
+        `<label style="margin:0">Y${y}</label>` +
+        `<input type="number" id="year-duties-${y}" min="0" max="31" value="${yd[y] ?? cfg.minDutiesPerMonth}" ` +
+        `style="width:64px" onchange="Admin.saveYearDuties()" />`
+      ).join('');
+    }
+  }
+
+  async function saveNumYears() {
+    const n = parseInt(document.getElementById('num-years-input').value);
+    if (!n || n < 1 || n > 10) return;
+    const cfg = DB.getConfig();
+    cfg.numYears = n;
+    // Seed any new years with the global default
+    cfg.yearMinDuties = cfg.yearMinDuties || {};
+    for (let y = 1; y <= n; y++) {
+      if (cfg.yearMinDuties[y] == null) cfg.yearMinDuties[y] = cfg.minDutiesPerMonth;
+    }
+    await DB.saveConfig(cfg);
+    renderShiftSettings();   // rebuild the per-year inputs
+  }
+
+  async function saveYearDuties() {
+    const cfg   = DB.getConfig();
+    const years = DB.getYears();
+    cfg.yearMinDuties = cfg.yearMinDuties || {};
+    years.forEach(y => {
+      const el = document.getElementById(`year-duties-${y}`);
+      if (el) cfg.yearMinDuties[y] = parseInt(el.value) || cfg.minDutiesPerMonth;
+    });
+    await DB.saveConfig(cfg);
   }
 
   async function saveShiftMode() {
@@ -332,9 +414,10 @@ const Admin = (() => {
   return {
     render,
     renderPGRList, renderPendingInvites, sendInvite, revokeInvite,
-    openEditPGR, closePGRModal, savePGR, deletePGR,
+    _onInviteRoleChange,
+    openEditPGR, closePGRModal, savePGR, deletePGR, transferAdmin,
     renderUnitList, addUnit, deleteUnit,
-    saveShiftMode, saveMaxBays, saveMinDuties,
+    saveShiftMode, saveMaxBays, saveMinDuties, saveNumYears, saveYearDuties,
     renderReplacementLog, addAdminLeave,
   };
 })();

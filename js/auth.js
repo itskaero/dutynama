@@ -114,7 +114,8 @@ const Auth = (() => {
         name:       pending.name,
         email,
         role:       pending.role,
-        minDuties:  pending.minDuties || 8,
+        year:       pending.year || null,
+        minDuties:  pending.minDuties ?? null,
         createdAt:  new Date().toISOString(),
         createdBy:  pending.createdBy || '',
       });

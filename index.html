@@ -227,8 +227,12 @@
           </select>
           <label>Max Bays per PGR (default)</label>
           <input type="number" id="max-bays-input" min="1" max="10" value="2" onchange="Admin.saveMaxBays()" />
-          <label>Min duties/month per PGR</label>
+          <label>Min duties/month per PGR (global default)</label>
           <input type="number" id="min-duties-input" min="1" max="31" value="8" onchange="Admin.saveMinDuties()" />
+          <label style="margin-top:.75rem">Years of PGR training</label>
+          <input type="number" id="num-years-input" min="1" max="10" value="4" style="width:72px" onchange="Admin.saveNumYears()" />
+          <label style="margin-top:.75rem">Min duties by year of training</label>
+          <div id="year-duties-container" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center"></div>
         </div>
         <!-- Replacement Log -->
         <div class="admin-card">
@@ -258,7 +262,11 @@
           <option value="senior_resident">Senior Resident</option>
           <option value="viewer">Viewer</option>
         </select>
-        <label>Min Duties / Month</label>
+        <label>Year of Training</label>
+        <select id="pgr-year-input">
+          <!-- populated dynamically by Admin.openEditPGR -->
+        </select>
+        <label>Min Duties / Month <small style="font-weight:normal;opacity:.7">(overrides year default)</small></label>
         <input type="number" id="pgr-min-duties-input" min="0" max="31" value="8" />
         <input type="hidden" id="pgr-edit-id" />
       </div>

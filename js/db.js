@@ -104,12 +104,16 @@ const DB = (() => {
         { id: 'PICU',    name: 'PICU'    },
       ],
       shiftMode: 3, maxBaysPerPGR: 2, minDutiesPerMonth: 8,
+      numYears: 4,
+      yearMinDuties: { 1: 8, 2: 8, 3: 8, 4: 8 },
     };
   }
 
   // ── CONFIG ─────────────────────────────────────────────
   function getConfig()    { return C.config || _defaultConfig(); }
   function getUnits()     { return getConfig().units; }
+  // Returns [1, 2, …, numYears] — the set of valid training years
+  function getYears()     { return Array.from({ length: getConfig().numYears || 4 }, (_, i) => i + 1); }
   function getShifts() {
     return getConfig().shiftMode === 2
       ? [{ id:'Day',     label:'Day',     hours:12 },
@@ -121,6 +125,15 @@ const DB = (() => {
   async function saveConfig(cfg) {
     C.config = cfg;
     await fs().doc('config/main').set(cfg);
+  }
+
+  // Returns the effective min duties for a PGR: individual override → year default → global default
+  function getEffectiveMinDuties(pgr) {
+    if (pgr.minDuties != null) return pgr.minDuties;
+    const cfg = getConfig();
+    const yd  = cfg.yearMinDuties || {};
+    if (pgr.year && yd[pgr.year] != null) return yd[pgr.year];
+    return cfg.minDutiesPerMonth;
   }
 
   // ── PGRs ───────────────────────────────────────────────
@@ -146,10 +159,10 @@ const DB = (() => {
     return snap.docs.map(d => ({ _docId: d.id, ...d.data() }));
   }
 
-  async function addPendingUser({ name, email, role, minDuties, createdBy }) {
+  async function addPendingUser({ name, email, role, year, minDuties, createdBy }) {
     const ref = fs().collection('pendingUsers').doc();
-    await ref.set({ name, email: email.toLowerCase(), role, minDuties, createdBy,
-                    createdAt: new Date().toISOString() });
+    await ref.set({ name, email: email.toLowerCase(), role, year: year || null,
+                    minDuties, createdBy, createdAt: new Date().toISOString() });
     return ref.id;
   }
 
@@ -305,7 +318,7 @@ const DB = (() => {
   return {
     uid, init, teardown,
     // Config
-    getConfig, saveConfig, getUnits, getShifts,
+    getConfig, saveConfig, getUnits, getShifts, getYears, getEffectiveMinDuties,
     // PGRs
     getPGRs, getPGR, upsertPGR, deletePGR,
     // Pending invites

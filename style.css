@@ -309,6 +309,14 @@ body {
 }
 .btn-danger:hover  { background: #d1242f; border-color: rgba(240,246,252,0.15); }
 
+/* Warn */
+.btn-warn {
+  background: #9a6700;
+  border-color: rgba(240,246,252,0.1);
+  color: #fff;
+}
+.btn-warn:hover { background: #bf8700; border-color: rgba(240,246,252,0.15); }
+
 /* Ghost — text only, like GitHub's link-looking buttons */
 .btn-ghost {
   background: transparent;

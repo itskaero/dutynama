@@ -124,7 +124,7 @@ const Dashboard = (() => {
       </tr></thead><tbody>`;
 
     pgrs.forEach(pgr => {
-      const minDuties = pgr.minDuties || cfg.minDutiesPerMonth;
+      const minDuties = DB.getEffectiveMinDuties(pgr);
       const duties    = DB.countDutiesForPGR(pgr.id, ym);
       const delta     = duties - minDuties;
       const leaves    = DB.getLeavesForPGR(pgr.id).filter(l => l.date.startsWith(ym) && l.status !== 'rejected').length;

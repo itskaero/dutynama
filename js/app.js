@@ -20,10 +20,16 @@ const App = (() => {
   async function _afterFirebaseLogin(firebaseUser) {
     _showLoading('Loading your data…');
     try {
-      // Load Firestore profile
-      const snap = await firebase.firestore().collection('users').doc(firebaseUser.uid).get();
+      // Load Firestore profile — retry a few times to handle the race where
+      // onAuthStateChanged fires before the initial-setup writes complete.
+      let snap = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        snap = await firebase.firestore().collection('users').doc(firebaseUser.uid).get();
+        if (snap.exists) break;
+        await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      }
       if (!snap.exists) {
-        // Profile missing — signed out and show login
+        // Profile still missing after retries — sign out and show login
         await firebase.auth().signOut();
         _hideLoading();
         Auth.showLogin();
