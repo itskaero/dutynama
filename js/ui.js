@@ -16,7 +16,7 @@ const UI = (() => {
   const ROLE_TABS = {
     senior_pgr:      ['dashboard','roster','leaves','preferences','admin'],
     pgr:             ['dashboard','roster','leaves','preferences'],
-    senior_resident: ['dashboard','roster','leaves','admin'],
+    senior_registrar: ['dashboard','roster','leaves','admin'],
     viewer:          ['dashboard'],
   };
 

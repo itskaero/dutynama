@@ -137,10 +137,13 @@ const DB = (() => {
 
   // Returns the effective min duties for a PGR: individual override → year default → global default
   function getEffectiveMinDuties(pgr) {
-    if (pgr.minDuties != null) return pgr.minDuties;
     const cfg = getConfig();
     const yd  = cfg.yearMinDuties || {};
-    if (pgr.year && yd[pgr.year] != null) return yd[pgr.year];
+    // Year-level default takes precedence (admin-wide rule per training year)
+    if (pgr.year && yd[pgr.year] != null && !isNaN(Number(yd[pgr.year]))) return Number(yd[pgr.year]);
+    // Individual custom min duties (only if set and not NaN)
+    if (pgr.minDuties != null && !isNaN(Number(pgr.minDuties))) return Number(pgr.minDuties);
+    // Global fallback
     return cfg.minDutiesPerMonth;
   }
 
@@ -168,20 +171,39 @@ const DB = (() => {
   }
 
   async function addPendingUser({ name, email, role, year, minDuties, createdBy }) {
-    const ref = fs().collection('pendingUsers').doc();
-    await ref.set({
-      name,
-      email: email.toLowerCase(),
-      role,
-      year:      year || null,
+    const tempId      = uid(); // same ID used for both collections
+    const normalEmail = email.toLowerCase();
+    const userData = {
+      uid: tempId, id: tempId,
+      email: normalEmail, name, role,
+      year: year || null,
       minDuties: minDuties ?? null,
       createdBy,
       createdAt: new Date().toISOString(),
+      needsSetup: true, // no Firebase Auth account yet
+    };
+    // Add to team immediately — visible in roster without account setup
+    if (!C.users.find(p => p.id === tempId)) C.users.push(userData);
+    // Write user doc + invite doc atomically
+    const batch = fs().batch();
+    batch.set(fs().collection('users').doc(tempId), userData);
+    batch.set(fs().collection('pendingUsers').doc(tempId), {
+      name, email: normalEmail, role,
+      year: year || null, minDuties: minDuties ?? null,
+      createdBy, createdAt: new Date().toISOString(),
+      userId: tempId, // link back to the pre-created users doc
     });
-    return ref.id;
+    await batch.commit();
+    return tempId;
   }
 
   async function deletePendingUser(docId) {
+    // Also remove the pre-created users doc that was created alongside this invite
+    const preUser = C.users.find(p => p.id === docId && p.needsSetup);
+    if (preUser) {
+      C.users = C.users.filter(p => p.id !== docId);
+      await fs().collection('users').doc(docId).delete();
+    }
     await fs().collection('pendingUsers').doc(docId).delete();
   }
 
@@ -238,6 +260,27 @@ const DB = (() => {
     await batch.commit();
   }
 
+  async function clearRosterForMonth(ym) {
+    const entries = getRosterForMonth(ym);
+    C.roster = C.roster.filter(r => !r.date.startsWith(ym));
+    const batch = fs().batch();
+    entries.forEach(e => batch.delete(fs().collection('roster').doc(e.id)));
+    await batch.commit();
+  }
+
+  async function swapRosterEntries(idA, idB) {
+    const a = C.roster.find(r => r.id === idA);
+    const b = C.roster.find(r => r.id === idB);
+    if (!a || !b) return;
+    const tmp = a.pgrId;
+    a.pgrId   = b.pgrId;
+    b.pgrId   = tmp;
+    const batch = fs().batch();
+    batch.update(fs().collection('roster').doc(idA), { pgrId: a.pgrId });
+    batch.update(fs().collection('roster').doc(idB), { pgrId: b.pgrId });
+    await batch.commit();
+  }
+
   // ── LEAVES ─────────────────────────────────────────────
   function getLeaves()            { return C.leaves; }
   function getLeavesForPGR(pgrId)   { return C.leaves.filter(l => l.pgrId === pgrId); }
@@ -280,6 +323,7 @@ const DB = (() => {
   }
 
   // ── PREFERENCES ────────────────────────────────────────
+  function getAllPrefs()    { return C.prefs; }
   function getPrefForPGR(pgrId) {
     return C.prefs.find(p => p.pgrId === pgrId) || { pgrId, offDays: [] };
   }
@@ -342,12 +386,12 @@ const DB = (() => {
     // Roster
     getRoster, getRosterForMonth, getRosterForDate,
     assignShift, upsertRosterEntry, deleteRosterEntry,
-    removeShift, saveRoster, countDutiesForPGR,
+    removeShift, saveRoster, clearRosterForMonth, swapRosterEntries, countDutiesForPGR,
     // Leaves
     getLeaves, getLeavesForPGR, getLeavesForMonth, getLeavesForDate,
     isOnLeave, applyLeave, addLeave, updateLeaveStatus, deleteLeave,
     // Prefs
-    getPrefForPGR, savePrefForPGR,
+    getAllPrefs, getPrefForPGR, savePrefForPGR,
     // Alerts
     getAlerts, addAlert, markAlertsSeen, clearAlerts, unseenAlertCount,
     // Carry forward

@@ -9,12 +9,12 @@ const Admin = (() => {
 
   function render() {
     const role = Auth.currentUser()?.role;
-    if (!['senior_pgr', 'senior_resident'].includes(role)) {
+    if (!['senior_pgr', 'senior_registrar'].includes(role)) {
       document.getElementById('page-admin').innerHTML =
         '<div class="page-inner"><p class="muted">Access denied.</p></div>';
       return;
     }
-    if (role === 'senior_resident') {
+    if (role === 'senior_registrar') {
       renderSRPanel();
     } else {
       renderPGRList();
@@ -83,7 +83,12 @@ const Admin = (() => {
 
   // ── Pending Invites ───────────────────────────────────
   async function renderPendingInvites() {
-    const pending = await DB.getPendingUsers();
+    let pending = [];
+    try {
+      pending = await DB.getPendingUsers();
+    } catch (e) {
+      console.warn('[Admin] Could not load pending invites:', e.message);
+    }
     let html = `
       <div class="section-heading">Invite New PGR</div>
       <div class="admin-card">
@@ -93,7 +98,7 @@ const Admin = (() => {
           <select id="inv-role" onchange="Admin._onInviteRoleChange()">
             <option value="pgr">PGR</option>
             <option value="senior_pgr">Senior PGR</option>
-            <option value="senior_resident">Senior Resident</option>
+            <option value="senior_registrar">Senior Registrar</option>
             <option value="viewer">Viewer</option>
           </select>
           <select id="inv-year" title="PGR year of training">
@@ -136,7 +141,7 @@ const Admin = (() => {
 
   async function sendInvite() {
     const name     = document.getElementById('inv-name').value.trim();
-    const username = document.getElementById('inv-username').value.trim().toLowerCase();
+    const email    = document.getElementById('inv-email').value.trim().toLowerCase();
     const role     = document.getElementById('inv-role').value;
     const year     = parseInt(document.getElementById('inv-year').value) || null;
     const cfg      = DB.getConfig();
@@ -144,44 +149,58 @@ const Admin = (() => {
     const defaultMin = year ? (yd[year] ?? cfg.minDutiesPerMonth) : cfg.minDutiesPerMonth;
     const minDuties  = parseInt(document.getElementById('inv-duties').value) || defaultMin;
 
-    if (!name || !username) { alert('Name and username are required.'); return; }
-    if (!/^[a-z0-9][a-z0-9._-]*$/.test(username) || username.length < 2 || username.length > 20) {
-      alert('Username: 2–20 chars, only letters/digits/dots/hyphens, must start with a letter or digit.');
-      return;
+    if (!name || !email) { alert('Name and email are required.'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      alert('Please enter a valid email address.'); return;
     }
 
-    // Check if username already taken
-    if (DB.getPGRs().find(p => (p.username || '').toLowerCase() === username)) {
-      alert('A user with this username already exists.'); return;
+    // Check if email already registered
+    if (DB.getPGRs().find(p => (p.email || '').toLowerCase() === email)) {
+      alert('A user with this email already exists.'); return;
     }
 
-    const setupCode = _genSetupCode();
     const btn = document.querySelector('#pending-invites-section .btn-primary');
-    if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     try {
       await DB.addPendingUser({
-        name, username, role, year, minDuties,
+        name, email, role, year, minDuties,
         createdBy: Auth.currentUser()?.uid || '',
-        setupCode,
       });
-      document.getElementById('inv-name').value     = '';
-      document.getElementById('inv-username').value = '';
+      document.getElementById('inv-name').value  = '';
+      document.getElementById('inv-email').value = '';
 
+      // Open email client with a pre-filled invite message
+      const appUrl  = window.location.href.split('#')[0];
+      const subject = encodeURIComponent('DutyNama — You have been added to the team');
+      const body    = encodeURIComponent(
+        `Hi ${name},\n\n` +
+        `You have been added to the DutyNama duty roster. ` +
+        `You are already visible in the team and can be assigned duties.\n\n` +
+        `To log in and manage your own preferences, open the app and set up your account:\n` +
+        `${appUrl}\n\n` +
+        `Click "Setup Account (I was invited)" and enter:\n` +
+        `  Email: ${email}\n\n` +
+        `You will then choose your own PIN to complete login setup.\n` +
+        `(Account setup is optional — your admin can manage preferences on your behalf.)`
+      );
+      const _a = document.createElement('a');
+      _a.href = `mailto:${email}?subject=${subject}&body=${body}`;
+      _a.click();
       alert(
-        `✅ Invite created!\n\n` +
-        `Tell ${name} to click “Claim Invite” on the login screen and enter:\n` +
-        `  Username:    ${username}\n` +
-        `  Setup Code:  ${setupCode}\n\n` +
-        `They will then choose their own PIN.`
+        `✅ ${name} added to the team!\n\n` +
+        `Your email app should have opened with a ready-to-send message.\n` +
+        `If it didn't open, manually tell them:\n` +
+        `  Email: ${email}\n\n` +
+        `They are already in the team roster. ` +
+        `Account setup is only needed if they want to log in themselves.`
       );
       await renderPendingInvites();
     } catch (e) {
       alert('Error: ' + e.message);
-      if (btn) { btn.disabled = false; btn.textContent = 'Create Invite'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Send Invite'; }
     }
   }
-
   async function revokeInvite(docId) {
     if (!confirm('Revoke this invite?')) return;
     await DB.deletePendingUser(docId);
@@ -214,6 +233,7 @@ const Admin = (() => {
 
   async function savePGR() {
     const name      = document.getElementById('pgr-name-input').value.trim();
+    const email     = document.getElementById('pgr-email-input').value.trim().toLowerCase();
     const role      = document.getElementById('pgr-role-input').value;
     const year      = parseInt(document.getElementById('pgr-year-input').value) || null;
     const minDuties = parseInt(document.getElementById('pgr-min-duties-input').value) ?? null;
@@ -221,8 +241,12 @@ const Admin = (() => {
 
     if (!name) { alert('Name required.'); return; }
     if (!editId) { alert('No user selected for editing.'); return; }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      alert('Invalid email address.'); return;
+    }
 
-    const pgr = { ...DB.getPGR(editId), name, role, year, minDuties };
+    const existing = DB.getPGR(editId);
+    const pgr = { ...existing, name, email: email || existing.email || '', role, year, minDuties };
     await DB.upsertPGR(pgr);
     closePGRModal();
     renderPGRList();
@@ -434,7 +458,7 @@ const Admin = (() => {
   }
 
   return {
-    render,
+    render, switchTab,
     renderPGRList, renderPendingInvites, sendInvite, revokeInvite,
     _onInviteRoleChange,
     openEditPGR, closePGRModal, savePGR, deletePGR, transferAdmin,

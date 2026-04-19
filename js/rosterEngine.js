@@ -6,6 +6,7 @@ const RosterEngine = (() => {
 
   let _year  = new Date().getFullYear();
   let _month = new Date().getMonth() + 1; // 1-based
+  let _swapSelection = null; // { entryId, el }
 
   function currentYM() {
     return `${_year}-${String(_month).padStart(2,'0')}`;
@@ -23,84 +24,185 @@ const RosterEngine = (() => {
     render();
   }
 
-  // ── Main render ──────────────────────────────────────────
+  // ── Main render — Day × Unit Matrix ─────────────────────
   function render() {
     const ym    = currentYM();
     const label = new Date(_year, _month - 1, 1)
       .toLocaleString('default', { month: 'long', year: 'numeric' });
-    document.getElementById('roster-month-label').textContent    = label;
-    document.getElementById('current-month-label').textContent   = label;
+    document.getElementById('roster-month-label').textContent  = label;
+    document.getElementById('current-month-label').textContent = label;
 
     const daysInMonth = new Date(_year, _month, 0).getDate();
-    const firstDay    = new Date(_year, _month - 1, 1).getDay(); // 0=Sun
+    const units       = DB.getUnits();
+    const shifts      = DB.getShifts();
+    const pgrs        = DB.getPGRs();
+    const roster      = DB.getRosterForMonth(ym);
+    const leaves      = DB.getLeavesForMonth(ym);
+    const today       = todayStr();
+    const canEdit     = Auth.can('editRoster');
+    const cfg         = DB.getConfig();
+    const maxBays     = cfg.maxBaysPerPGR || 2;
 
-    const units  = DB.getUnits();
-    const shifts = DB.getShifts();
-    const pgrs   = DB.getPGRs();
-    const roster = DB.getRosterForMonth(ym);
-    const leaves = DB.getLeavesForMonth(ym);
-    const canEdit = Auth.can('editRoster');
+    // Pre-compute: how many bays each PGR covers per shift per day
+    const bayMap = {};
+    roster.forEach(r => {
+      const k = `${r.pgrId}|${r.date}|${r.shift}`;
+      bayMap[k] = (bayMap[k] || 0) + 1;
+    });
 
-    // Build calendar grid
-    let html = `<div class="cal-header">`;
-    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d =>
-      html += `<div class="cal-head-cell">${d}</div>`
-    );
-    html += `</div><div class="cal-grid">`;
+    // Pre-compute: unique duty-shift count per PGR for the month
+    const dutyCountMap = {};
+    roster.forEach(r => {
+      if (!dutyCountMap[r.pgrId]) dutyCountMap[r.pgrId] = new Set();
+      dutyCountMap[r.pgrId].add(`${r.date}|${r.shift}`);
+    });
 
-    // Empty cells before month starts
-    for (let i = 0; i < firstDay; i++) {
-      html += `<div class="cal-cell empty"></div>`;
-    }
+    // Pre-compute: back-to-back 24h situations
+    // Case 1 — Night (day D) + any shift (day D+1): no overnight rest
+    // Case 2 — Night + any other shift on the SAME day (≥18h straight)
+    const _shiftsByPD = {};
+    roster.forEach(r => {
+      const k = `${r.pgrId}|${r.date}`;
+      if (!_shiftsByPD[k]) _shiftsByPD[k] = new Set();
+      _shiftsByPD[k].add(r.shift);
+    });
+    const backTo24Set = new Set();
+    roster.forEach(r => {
+      if (r.shift === 'Night') {
+        // Case 1: next calendar day
+        const dt      = new Date(r.date + 'T00:00:00');
+        dt.setDate(dt.getDate() + 1);
+        const nextStr = dt.toISOString().slice(0, 10);
+        const nextSh  = _shiftsByPD[`${r.pgrId}|${nextStr}`];
+        if (nextSh && nextSh.size) {
+          backTo24Set.add(`${r.pgrId}|${r.date}|Night`);
+          nextSh.forEach(s => backTo24Set.add(`${r.pgrId}|${nextStr}|${s}`));
+        }
+        // Case 2: same day has other shifts too
+        const sameSh = _shiftsByPD[`${r.pgrId}|${r.date}`];
+        if (sameSh && sameSh.size >= 2) {
+          sameSh.forEach(s => backTo24Set.add(`${r.pgrId}|${r.date}|${s}`));
+        }
+      }
+    });
 
-    for (let d = 1; d <= daysInMonth; d++) {
-      const date      = `${ym}-${String(d).padStart(2,'0')}`;
-      const isToday   = date === todayStr();
-      const dayLeaves = leaves.filter(l => l.date === date);
-      const dayRoster = roster.filter(r => r.date === date);
-      const isWeekend = [0, 6].includes(new Date(_year, _month - 1, d).getDay());
+    const DAY_NAMES  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const SHIFT_CLS  = { M:'morning', E:'evening', N:'night', D:'day' };
 
-      html += `<div class="cal-cell ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''}"
-        onclick="RosterEngine.openDay('${date}')">
-        <div class="cal-day-num">${d}</div>`;
+    // ── Two-row grouped header ───────────────────────────
+    let html = `<div class="roster-matrix-wrap"><table class="roster-matrix"><thead>`;
 
-      // Leave pills
-      dayLeaves.forEach(l => {
-        const pgr = pgrs.find(p => p.id === l.pgrId);
-        html += `<div class="pill leave" title="${pgr?.name} — Leave (${l.status})">
-          L: ${pgr?.name?.split(' ')[0] || '?'}
-        </div>`;
+    // Header row 1: Date | Day | [Shift name spanning units...] per shift
+    html += `<tr>
+      <th class="rm-hdr rm-date-hdr" rowspan="2">Date</th>
+      <th class="rm-hdr rm-day-hdr"  rowspan="2">Day</th>`;
+    shifts.forEach(sh => {
+      const cls = SHIFT_CLS[sh.id] || sh.id.toLowerCase();
+      html += `<th class="rm-hdr rm-shift-group rm-sg-${cls}" colspan="${units.length}">${sh.label}</th>`;
+    });
+    html += `</tr>`;
+
+    // Header row 2: unit sub-headers per shift
+    html += `<tr>`;
+    shifts.forEach(sh => {
+      const cls = SHIFT_CLS[sh.id] || sh.id.toLowerCase();
+      units.forEach(u => {
+        html += `<th class="rm-hdr rm-unit-hdr rm-uh-${cls}">${u.name}</th>`;
       });
+    });
+    html += `</tr></thead><tbody>`;
 
-      // Shift summaries (one row per shift)
+    // ── One row per day ──────────────────────────────────
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date    = `${ym}-${String(d).padStart(2,'0')}`;
+      const isToday = date === today;
+      const dow     = new Date(_year, _month - 1, d).getDay();
+      const isWknd  = dow === 0 || dow === 6;
+      const isSat   = dow === 6;
+      const dayLeaves = leaves.filter(l => l.date === date && l.status !== 'rejected');
+
+      html += `<tr class="rm-row${isToday ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}">
+        <td class="rm-date-cell${isToday ? ' rm-today' : ''}" onclick="RosterEngine.openDay('${date}')">
+          <span class="rm-date-num">${d}</span>
+        </td>
+        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}" onclick="RosterEngine.openDay('${date}')">
+          ${DAY_NAMES[dow]}
+        </td>`;
+
       shifts.forEach(sh => {
-        const shiftEntries = dayRoster.filter(r => r.shift === sh.id);
-        if (!shiftEntries.length) return;
+        const cls = SHIFT_CLS[sh.id] || sh.id.toLowerCase();
+        units.forEach(u => {
+          const entries = roster.filter(r =>
+            r.date === date && r.shift === sh.id && r.unitId === u.id
+          );
 
-        // Unique PGRs in this shift
-        const uniquePGRs = [...new Set(shiftEntries.map(r => r.pgrId))];
-        uniquePGRs.forEach(pgrId => {
-          const pgr   = pgrs.find(p => p.id === pgrId);
-          const bays  = shiftEntries.filter(r => r.pgrId === pgrId).map(r => r.unitId);
-          const hasReplace = shiftEntries.some(r => r.pgrId === pgrId && r.replaced);
-          const shiftClass = sh.id.toLowerCase();
-          html += `<div class="pill ${shiftClass} ${hasReplace ? 'replaced' : ''}"
-            title="${sh.label}: ${pgr?.name} — ${bays.join(', ')}">
-            ${sh.id[0]}: ${pgr?.name?.split(' ')[0] || '?'}${bays.length > 1 ? ` (${bays.length})` : ''}
-            ${hasReplace ? '<span class="r-tag">R</span>' : ''}
-          </div>`;
+          let cellContent = '';
+          if (entries.length) {
+            entries.forEach(e => {
+              const pgr        = pgrs.find(p => p.id === e.pgrId);
+              const name       = pgr ? pgr.name : e.pgrId;
+              const onLeave    = dayLeaves.some(l => l.pgrId === e.pgrId);
+              const replaced   = e.replaced;
+              const bays       = bayMap[`${e.pgrId}|${date}|${sh.id}`] || 0;
+              const isOverBay  = !onLeave && !replaced && bays > maxBays;
+              const monthDuties = dutyCountMap[e.pgrId]?.size || 0;
+              const minDuties   = DB.getEffectiveMinDuties(pgr || {});
+              const isOverDuty  = !onLeave && !replaced && monthDuties > minDuties;
+              const is24h       = !onLeave && !replaced && backTo24Set.has(`${e.pgrId}|${date}|${sh.id}`);
+              const alertCls   = is24h && isOverBay && isOverDuty ? ' rm-alert-24h-both'
+                               : is24h && isOverBay  ? ' rm-alert-24h-bay'
+                               : is24h && isOverDuty ? ' rm-alert-24h-duty'
+                               : is24h               ? ' rm-alert-24h'
+                               : isOverBay && isOverDuty ? ' rm-alert-both'
+                               : isOverBay               ? ' rm-alert-bay'
+                               : isOverDuty              ? ' rm-alert-duty' : '';
+              const alertTip   = is24h && isOverBay && isOverDuty
+                ? ` ⚠ Back-to-back 24h + ${bays} bays + over-assigned (${monthDuties}/${minDuties} duties)`
+                : is24h && isOverBay
+                ? ` \u26a0 Back-to-back 24h + ${bays} bays this shift`
+                : is24h && isOverDuty
+                ? ` \u26a0 Back-to-back 24h + over-assigned (${monthDuties}/${minDuties} duties)`
+                : is24h
+                ? ` \u26a0 Back-to-back duty \u2014 no overnight rest`
+                : isOverBay && isOverDuty
+                ? ` \u26a0 ${bays} bays + over-assigned (${monthDuties}/${minDuties} duties)`
+                : isOverBay  ? ` \u26a0 ${bays} bays this shift (max ${maxBays})`
+                : isOverDuty ? ` \u26a0 Over-assigned: ${monthDuties}/${minDuties} duties` : '';
+              const swappable  = canEdit && !onLeave && !replaced;
+              const swapAttrs  = swappable
+                ? `data-eid="${e.id}" onclick="event.stopPropagation();RosterEngine.selectForSwap('${e.id}',this)"`
+                : '';
+              const delBtn = canEdit
+                ? `<button class="rm-del-btn" onclick="event.stopPropagation();RosterEngine.removeAssignment('${e.id}','${date}')" title="Remove">✕</button>`
+                : '';
+              cellContent += `<div class="rm-name rm-name-${cls}${replaced ? ' rm-replaced' : ''}${onLeave ? ' rm-leave-warn' : alertCls}${swappable ? ' rm-swappable' : ''}${canEdit ? ' rm-has-del' : ''}"
+                ${swapAttrs}
+                title="${name}${replaced ? ' (replaced)' : ''}${onLeave ? ' \u26a0 On Leave!' : alertTip}"><span class="rm-chip-name">${name}</span>${delBtn}</div>`;
+            });
+          } else {
+            cellContent = `<span class="rm-unassigned">\u2014</span>`;
+          }
+
+          html += `<td class="rm-cell rm-cell-${cls}${isToday ? ' rm-today' : ''}"
+            onclick="RosterEngine.openDay('${date}')">${cellContent}</td>`;
         });
       });
 
-      html += `</div>`; // cal-cell
+      html += `</tr>`;
     }
 
-    html += `</div>`; // cal-grid
+    html += `</tbody></table></div>`;
     document.getElementById('roster-calendar').innerHTML = html;
 
-    // Show/hide edit controls
-    const autoBtn   = document.getElementById('btn-auto-roster');
-    if (autoBtn) autoBtn.style.display = canEdit ? '' : 'none';
+    const autoBtn  = document.getElementById('btn-auto-roster');
+    const clearBtn = document.getElementById('btn-clear-roster');
+    if (autoBtn)  autoBtn.style.display  = canEdit ? '' : 'none';
+    if (clearBtn) clearBtn.style.display = canEdit ? '' : 'none';
+
+    // Cancel any pending swap when roster re-renders
+    _swapSelection = null;
+    const swapBar = document.getElementById('swap-status');
+    if (swapBar) swapBar.classList.add('hidden');
   }
 
   // ── Day detail modal ──────────────────────────────────────
@@ -312,6 +414,70 @@ const RosterEngine = (() => {
     alert(`Auto-generation complete: ${assignmentCount} assignments created.\nCheck alerts for any issues.`);
   }
 
+  // ── Clear roster for month ─────────────────────────────
+  function clearRoster() {
+    if (!Auth.can('editRoster')) return;
+    const ym    = currentYM();
+    const count = DB.getRosterForMonth(ym).length;
+    if (!count) { alert('No assignments to clear this month.'); return; }
+    if (!confirm(`Clear all ${count} assignments for ${ym}?\nThis cannot be undone.`)) return;
+    cancelSwap();
+    DB.clearRosterForMonth(ym).then(() => render());
+  }
+
+  // ── Swap two slots ─────────────────────────────────────
+  function selectForSwap(entryId, el) {
+    if (!Auth.can('editRoster')) return;
+
+    if (_swapSelection) {
+      // Click the same chip — deselect
+      if (_swapSelection.entryId === entryId) {
+        cancelSwap();
+        return;
+      }
+
+      // Second chip selected — execute swap
+      const prevEl = _swapSelection.el;
+      const prevId = _swapSelection.entryId;
+      cancelSwap();
+
+      const rA   = DB.getRoster().find(r => r.id === prevId);
+      const rB   = DB.getRoster().find(r => r.id === entryId);
+      if (!rA || !rB) return;
+      const nameA = DB.getPGR(rA.pgrId)?.name || rA.pgrId;
+      const nameB = DB.getPGR(rB.pgrId)?.name || rB.pgrId;
+
+      if (!confirm(`Swap assignments?\n\n${nameA}  (${rA.date} · ${rA.shift} · ${rA.unitId})\n↕\n${nameB}  (${rB.date} · ${rB.shift} · ${rB.unitId})`)) return;
+
+      DB.swapRosterEntries(prevId, entryId); // mutates C.roster synchronously before first await
+      render(); // optimistic re-render — warnings recompute immediately
+    } else {
+      // First chip selected
+      _swapSelection = { entryId, el };
+      el.classList.add('rm-swap-selected');
+      const bar = document.getElementById('swap-status');
+      if (bar) {
+        bar.textContent = '⇄ Swap mode: click a second slot to swap with, or click the same slot to cancel.';
+        bar.classList.remove('hidden');
+      }
+    }
+  }
+
+  function cancelSwap() {
+    if (_swapSelection) {
+      _swapSelection.el.classList.remove('rm-swap-selected');
+      _swapSelection = null;
+    }
+    const bar = document.getElementById('swap-status');
+    if (bar) bar.classList.add('hidden');
+  }
+
+  // Called by DB onSnapshot listener to keep calendar in sync
+  function refreshIfActive() {
+    const page = document.getElementById('page-roster');
+    if (page && !page.classList.contains('hidden')) render();
+  }
+
   // ── Export CSV ─────────────────────────────────────────
   function exportCSV() {
     const ym     = currentYM();
@@ -344,5 +510,7 @@ const RosterEngine = (() => {
     openDay, assignPGR, removeAssignment,
     openReplaceDialog, saveReplace,
     autoGenerate, exportCSV,
+    clearRoster, selectForSwap, cancelSwap,
+    refreshIfActive,
   };
 })();

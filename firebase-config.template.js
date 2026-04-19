@@ -26,10 +26,11 @@
  *                      && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'senior_pgr';
  *       }
  *
- *       // Pending invites — email-based, authenticated access only.
- *       // Senior PGR creates and revokes invites; users query by their email on setup.
+ *       // Pending invites — anyone can read (new users check their invite before creating
+ *       // a Firebase Auth account); only authenticated users can create/revoke.
  *       match /pendingUsers/{docId} {
- *         allow read, write: if request.auth != null;
+ *         allow read: if true;
+ *         allow write: if request.auth != null;
  *       }
  *
  *       match /{document=**} {

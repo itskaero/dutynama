@@ -172,6 +172,22 @@ const ValidationEngine = (() => {
       });
     }
 
+    // Low coverage check — count PGRs available on that date
+    const allPGRs       = DB.getPGRs().filter(p => p.role !== 'viewer');
+    const onLeaveOnDate = DB.getLeaves()
+      .filter(l => l.date === date && l.status !== 'rejected' && l.pgrId !== pgrId);
+    const availableCount = allPGRs.length - onLeaveOnDate.length - 1; // -1 for this PGR going on leave
+    const LOW_THRESHOLD = Math.max(2, Math.floor(allPGRs.length * 0.4)); // 40% or at least 2
+    if (availableCount < LOW_THRESHOLD) {
+      issues.push({
+        severity: 'warn',
+        code: 'LOW_COVERAGE',
+        message: `Only ${availableCount} PGR(s) will be available on ${date} if this leave is approved. Senior Resident will be notified.`,
+        notifySenior: true,
+        seniorMessage: `[SR] Low coverage on ${date}: ${pgr.name} applied for leave — only ${availableCount} PGR(s) available that day. Review staffing.`,
+      });
+    }
+
     return issues;
   }
 

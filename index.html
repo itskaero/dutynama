@@ -155,18 +155,34 @@
           <span id="roster-month-label" class="month-badge"></span>
           <button class="btn btn-sm btn-secondary" onclick="RosterEngine.nextMonth()">Next ▶</button>
           <button class="btn btn-primary btn-sm" id="btn-auto-roster" onclick="RosterEngine.autoGenerate()">⚡ Auto-Generate</button>
+          <button class="btn btn-sm btn-danger"  id="btn-clear-roster" onclick="RosterEngine.clearRoster()" style="display:none">🗑 Clear Roster</button>
           <button class="btn btn-sm btn-secondary" id="btn-export" onclick="RosterEngine.exportCSV()">⬇ Export CSV</button>
         </div>
       </div>
+
+      <!-- Swap status bar -->
+      <div id="swap-status" class="swap-status hidden"></div>
 
       <!-- Legend -->
       <div class="legend-row">
         <span class="legend-chip morning">M</span> Morning
         <span class="legend-chip evening">E</span> Evening
         <span class="legend-chip night">N</span> Night
-        <span class="legend-chip leave">L</span> Leave
-        <span class="legend-chip off">OFF</span>
+        <span class="legend-chip leave">L</span> On Leave
+        <span class="legend-chip off">OFF</span> Off-duty
         <span class="legend-chip replaced">R</span> Replaced
+        <span class="legend-divider"></span>
+        <span class="legend-section-label">Alerts &mdash;</span>
+        <span class="legend-chip alert-bay">!</span> &gt;2 Bays
+        <span class="legend-chip alert-duty">!</span> Over-assigned
+        <span class="legend-chip alert-24h">↺</span> 24h back-to-back
+        <span class="legend-divider"></span>
+        <span class="legend-section-label">Combined &mdash;</span>
+        <span class="legend-chip alert-both">!!</span> Bay + Over
+        <span class="legend-chip alert-24h-bay">↺!</span> 24h + Bay
+        <span class="legend-chip alert-24h-duty">↺!</span> 24h + Over
+        <span class="legend-chip alert-24h-both">↺!!</span> 24h + Bay + Over
+        <span class="legend-note">(each combo is a distinct solid colour)</span>
       </div>
 
       <div id="roster-calendar" class="roster-calendar"></div>
@@ -184,6 +200,34 @@
     </div>
   </div>
 
+  <!-- LEAVE REVIEW MODAL (Senior Resident) -->
+  <div id="leave-review-modal" class="modal hidden" onclick="if(event.target===this)LeaveManager.closeLeaveReview()">
+    <div class="modal-box" style="width:min(420px,94vw)">
+      <div class="modal-header">
+        <h3>Leave Application</h3>
+        <button class="btn btn-sm btn-ghost" onclick="LeaveManager.closeLeaveReview()">✕</button>
+      </div>
+      <div class="modal-body" style="gap:.75rem">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span id="lv-modal-name" style="font-size:1rem;font-weight:700"></span>
+          <span id="lv-modal-status" class="badge"></span>
+        </div>
+        <div style="display:flex;gap:1.5rem;font-size:.85rem;color:var(--text-muted)">
+          <span>📅 <strong id="lv-modal-date" style="color:var(--text)"></strong></span>
+        </div>
+        <div style="font-size:.82rem;color:var(--text-muted)">
+          <span style="font-weight:600;text-transform:uppercase;font-size:.7rem;letter-spacing:.4px">Reason</span><br>
+          <span id="lv-modal-note" style="color:var(--text)"></span>
+        </div>
+      </div>
+      <div class="modal-footer" style="gap:.5rem">
+        <button id="lv-modal-approve" class="btn btn-primary btn-sm">✓ Approve</button>
+        <button id="lv-modal-reject"  class="btn btn-danger  btn-sm">✕ Reject</button>
+        <button id="lv-modal-delete"  class="btn btn-ghost   btn-sm" style="margin-left:auto">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <!-- LEAVE MANAGEMENT -->
   <section id="page-leaves" class="page">
     <div class="page-inner">
@@ -197,9 +241,8 @@
   <section id="page-preferences" class="page">
     <div class="page-inner">
       <h2>My Preferences</h2>
-      <p class="muted">Mark preferred off-days. Violations will raise warnings only.</p>
-      <div id="pref-calendar" class="pref-calendar"></div>
-      <button class="btn btn-primary" onclick="Preferences.save()">Save Preferences</button>
+      <p class="muted">Mark preferred off-days. Violations raise warnings only — you can still be assigned.</p>
+      <div id="pref-calendar"></div>
     </div>
   </section>
 
@@ -279,12 +322,12 @@
         <label>Name</label>
         <input type="text" id="pgr-name-input" />
         <label>Email</label>
-        <input type="email" id="pgr-email-input" readonly style="opacity:.6" />
+        <input type="email" id="pgr-email-input" placeholder="Email address" />
         <label>Role</label>
         <select id="pgr-role-input">
           <option value="pgr">PGR</option>
           <option value="senior_pgr">Senior PGR</option>
-          <option value="senior_resident">Senior Resident</option>
+          <option value="senior_registrar">Senior Registrar</option>
           <option value="viewer">Viewer</option>
         </select>
         <label>Year of Training</label>

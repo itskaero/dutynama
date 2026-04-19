@@ -9,7 +9,7 @@
  *
  * Firebase Auth email = user's real email address.
  * PIN + salt is stored as the Firebase Auth password.
- * Roles: senior_pgr | pgr | senior_resident | viewer
+ * Roles: senior_pgr | pgr | senior_registrar | viewer
  */
 
 const Auth = (() => {
@@ -107,7 +107,7 @@ const Auth = (() => {
       console.log('[Auth] setupAccount(): invite valid —', invite.name, 'role:', invite.role);
 
       // Build profile — uid filled in after Firebase Auth account is created
-      const profileData = {
+      let profileData = {
         uid: null, id: null,
         email,
         name:      invite.name,
@@ -116,6 +116,7 @@ const Auth = (() => {
         minDuties: invite.minDuties ?? null,
         createdAt: new Date().toISOString(),
         createdBy: invite.createdBy || '',
+        needsSetup: false,
       };
 
       //  CRITICAL: set profile BEFORE the first await so that the
@@ -131,8 +132,26 @@ const Auth = (() => {
       profileData.uid = uid;
       profileData.id  = uid;
 
-      console.log('[Auth] setupAccount(): writing Firestore profile uid =', uid);
-      await firebase.firestore().collection('users').doc(uid).set(profileData);
+      // If a pre-created user doc exists (added to team at invite time), migrate it
+      const tempId = invite.userId;
+      if (tempId && tempId !== uid) {
+        console.log('[Auth] setupAccount(): migrating pre-created user doc', tempId, '→', uid);
+        const preSnap = await firebase.firestore().collection('users').doc(tempId).get();
+        if (preSnap.exists) {
+          // Merge pre-created data with real uid, preserving any stored preferences
+          profileData = { ...preSnap.data(), uid, id: uid, needsSetup: false };
+          Auth.setProfile(profileData);
+          const migBatch = firebase.firestore().batch();
+          migBatch.set(firebase.firestore().collection('users').doc(uid), profileData);
+          migBatch.delete(firebase.firestore().collection('users').doc(tempId));
+          await migBatch.commit();
+        } else {
+          await firebase.firestore().collection('users').doc(uid).set(profileData);
+        }
+      } else {
+        console.log('[Auth] setupAccount(): writing Firestore profile uid =', uid);
+        await firebase.firestore().collection('users').doc(uid).set(profileData);
+      }
 
       console.log('[Auth] setupAccount(): deleting invite doc');
       await inviteSnap.ref.delete();
@@ -253,12 +272,12 @@ const Auth = (() => {
     const role = _profile.role;
     const map  = {
       editRoster:    ['senior_pgr'],
-      manageLeaves:  ['senior_resident'],
-      manageReplace: ['senior_resident'],
-      applyLeave:    ['senior_resident'],
+      manageLeaves:  ['senior_registrar'],
+      manageReplace: ['senior_registrar'],
+      applyLeave:    ['pgr', 'senior_pgr'],
       setPrefs:      ['pgr', 'senior_pgr'],
-      admin:         ['senior_pgr', 'senior_resident'],
-      viewDashboard: ['senior_pgr', 'pgr', 'senior_resident', 'viewer'],
+      admin:         ['senior_pgr', 'senior_registrar'],
+      viewDashboard: ['senior_pgr', 'pgr', 'senior_registrar', 'viewer'],
     };
     return (map[action] || []).includes(role);
   }
