@@ -69,10 +69,18 @@ const App = (() => {
             Auth.showInitialSetup();
           }
         } catch (e) {
-          // Firestore unreachable (bad config, no internet, etc.)
-          // Still show init screen so user can at least see something actionable
-          console.warn('[DutyNama] Firestore check failed — showing init screen:', e.message);
-          Auth.showInitialSetup();
+          console.warn('[DutyNama] Firestore check failed:', e.code, e.message);
+          // 'unavailable'       → client is offline / can't reach Firestore
+          // 'permission-denied' → rules require auth (app already configured)
+          // In both cases the app is most likely set up → show login.
+          // Only fall back to init setup for unexpected errors (e.g. wrong project ID
+          // that still reaches the server and returns 'not-found' at the project level).
+          const code = e.code || '';
+          if (code === 'unavailable' || code === 'permission-denied') {
+            Auth.showLogin();
+          } else {
+            Auth.showInitialSetup();
+          }
         }
         _hideLoading();
         document.getElementById('auth-screen').classList.add('active');
