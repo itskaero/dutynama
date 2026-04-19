@@ -59,11 +59,14 @@ const App = (() => {
           if (cfgSnap.exists) {
             Auth.showLogin();
           } else {
+            // config/main doesn't exist → first run → create Senior PGR
             Auth.showInitialSetup();
           }
         } catch (e) {
-          console.error('[DutyNama] Firestore check failed:', e);
-          Auth.showLogin();
+          // Firestore unreachable (bad config, no internet, etc.)
+          // Still show init screen so user can at least see something actionable
+          console.warn('[DutyNama] Firestore check failed — showing init screen:', e.message);
+          Auth.showInitialSetup();
         }
         _hideLoading();
         document.getElementById('auth-screen').classList.add('active');
