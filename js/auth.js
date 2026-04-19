@@ -109,7 +109,7 @@ const Auth = (() => {
       const uid  = cred.user.uid;
 
       // Write user profile to Firestore
-      await firebase.firestore().collection('users').doc(uid).set({
+      const profileData = {
         uid, id: uid,
         name:       pending.name,
         email,
@@ -118,11 +118,17 @@ const Auth = (() => {
         minDuties:  pending.minDuties ?? null,
         createdAt:  new Date().toISOString(),
         createdBy:  pending.createdBy || '',
-      });
+      };
+      await firebase.firestore().collection('users').doc(uid).set(profileData);
 
       // Remove from pending
       await pendingDoc.ref.delete();
-      // onAuthStateChanged handles the rest
+
+      // Complete login directly — avoids onAuthStateChanged race where the
+      // listener fires before the profile write has finished.
+      Auth.setProfile(profileData);
+      await DB.init();
+      App.onLogin(profileData);
 
     } catch (e) {
       _setMsg(_friendlyError(e), true);
@@ -147,10 +153,12 @@ const Auth = (() => {
       const cred = await firebase.auth().createUserWithEmailAndPassword(email, _fbPass(pin));
       const uid  = cred.user.uid;
 
-      await firebase.firestore().collection('users').doc(uid).set({
+      const profileData = {
         uid, id: uid, name, email, role: 'senior_pgr', minDuties: 8,
         createdAt: new Date().toISOString(),
-      });
+      };
+
+      await firebase.firestore().collection('users').doc(uid).set(profileData);
 
       // Write default config
       await firebase.firestore().doc('config/main').set({
@@ -162,7 +170,12 @@ const Auth = (() => {
         ],
         shiftMode: 3, maxBaysPerPGR: 2, minDutiesPerMonth: 8,
       });
-      // onAuthStateChanged handles the rest
+
+      // Complete login directly — avoids onAuthStateChanged race where the
+      // listener fires before these Firestore writes have finished.
+      Auth.setProfile(profileData);
+      await DB.init();
+      App.onLogin(profileData);
     } catch (e) {
       _setMsg(_friendlyError(e), true);
       _setBtnLoading('btn-init', false, 'Create Admin Account');

@@ -43,6 +43,9 @@ const App = (() => {
   }
 
   async function _doAfterLogin(firebaseUser) {
+    // Guard: if initialSetup/setupAccount already completed login directly, nothing to do.
+    if (Auth.currentUser()) return;
+
     // Load Firestore profile — retry a few times to handle the race where
     // onAuthStateChanged fires before the initial-setup writes complete.
     let snap = null;
