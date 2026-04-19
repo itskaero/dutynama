@@ -124,6 +124,7 @@ const App = (() => {
 
   // ── Login / Logout hooks (called from Auth & UI) ──────────
   function onLogin(profile) {
+    window.scrollTo(0, 0);
     document.getElementById('auth-screen').classList.remove('active');
     document.getElementById('app-screen').classList.add('active');
     _hideLoading();

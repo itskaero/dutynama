@@ -167,17 +167,18 @@ const DB = (() => {
     return snap.docs.map(d => ({ _docId: d.id, ...d.data() }));
   }
 
-  async function addPendingUser({ name, username, role, year, minDuties, createdBy, setupCode }) {
-    // setupCode is used as the document ID — it acts as the invite token.
-    await fs().collection('pendingUsers').doc(setupCode).set({
-      name, username, role,
-      year:       year || null,
-      minDuties:  minDuties ?? null,
+  async function addPendingUser({ name, email, role, year, minDuties, createdBy }) {
+    const ref = fs().collection('pendingUsers').doc();
+    await ref.set({
+      name,
+      email: email.toLowerCase(),
+      role,
+      year:      year || null,
+      minDuties: minDuties ?? null,
       createdBy,
-      setupCode,
-      createdAt:  new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     });
-    return setupCode;
+    return ref.id;
   }
 
   async function deletePendingUser(docId) {

@@ -6,6 +6,7 @@ const Dashboard = (() => {
 
   function render() {
     renderTodayCards();
+    renderDutyChart();
     renderTodayDutyTable();
     renderMonthlyStats();
     renderOverworkIndicators();
@@ -170,6 +171,49 @@ const Dashboard = (() => {
     html += `</div>`;
 
     document.getElementById('overwork-indicators').innerHTML = html;
+  }
+
+  // ── Duty chart (Chart.js bar) ──────────────────────────
+  function renderDutyChart() {
+    const canvas = document.getElementById('duties-chart');
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    const ym   = RosterEngine.currentYM();
+    const pgrs = DB.getPGRs();
+    const labels = pgrs.map(p => p.name.split(' ')[0]);
+    const data   = pgrs.map(p => DB.countDutiesForPGR(p.id, ym));
+
+    if (canvas._chartInstance) canvas._chartInstance.destroy();
+    canvas._chartInstance = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Duties',
+          data,
+          backgroundColor: 'rgba(56,139,253,0.55)',
+          borderColor: '#388bfd',
+          borderWidth: 1,
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            grid: { color: 'rgba(48,54,61,0.6)' },
+            ticks: { color: '#8b949e', font: { size: 11 } },
+          },
+          y: {
+            grid: { color: 'rgba(48,54,61,0.6)' },
+            ticks: { color: '#8b949e', font: { size: 11 }, stepSize: 1 },
+            beginAtZero: true,
+          },
+        },
+      },
+    });
   }
 
   return { render };

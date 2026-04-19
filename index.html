@@ -34,26 +34,23 @@
 
     <!-- Mode: Login -->
     <div id="auth-mode-login" class="auth-mode active">
-      <label>Username</label>
-      <input type="text" id="login-username" placeholder="your_username" autocomplete="username" />
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="you@hospital.org" autocomplete="email" />
       <label>PIN
         <button type="button" class="pin-toggle" onclick="Auth.togglePIN('login-pin', this)">👁</button>
       </label>
       <input type="password" id="login-pin" maxlength="6" placeholder="4–6 digit PIN" autocomplete="current-password" />
       <button id="btn-login" class="btn btn-primary" onclick="Auth.login()">Login</button>
       <div class="auth-divider">New here?</div>
-      <button class="btn btn-ghost" onclick="Auth.showSetup()">Claim Invite (I was invited)</button>
+      <button class="btn btn-ghost" onclick="Auth.showSetup()">Setup Account (I was invited)</button>
     </div>
 
-    <!-- Mode: Claim Invite (invited user sets their own PIN) -->
+    <!-- Mode: Setup Account (invited user sets their own PIN) -->
     <div id="auth-mode-setup" class="auth-mode">
-      <h3>Claim Your Invite</h3>
-      <p class="auth-hint">Your Senior PGR will give you a username and a 6-character setup code.</p>
-      <label>Username</label>
-      <input type="text" id="setup-username" placeholder="your_username" autocomplete="username" />
-      <label>Setup Code</label>
-      <input type="text" id="setup-code" maxlength="6" placeholder="e.g. AB3X7K" autocomplete="off"
-        style="text-transform:uppercase;letter-spacing:.2em;font-weight:600" />
+      <h3>Setup Account</h3>
+      <p class="auth-hint">Enter the email your Senior PGR used to invite you.</p>
+      <label>Your Email</label>
+      <input type="email" id="setup-email" placeholder="you@hospital.org" autocomplete="email" />
       <label>Choose PIN (4–6 digits)
         <button type="button" class="pin-toggle" onclick="Auth.togglePIN('setup-pin', this)">👁</button>
       </label>
@@ -70,8 +67,8 @@
       <p class="auth-hint">No accounts yet. Create the Senior PGR admin account to get started.</p>
       <label>Your Name</label>
       <input type="text" id="init-name" placeholder="Dr. Full Name" />
-      <label>Username <small style="font-weight:normal;opacity:.7">(used to log in, e.g. alitahir)</small></label>
-      <input type="text" id="init-username" placeholder="choose_username" autocomplete="username" />
+      <label>Your Email</label>
+      <input type="email" id="init-email" placeholder="you@hospital.org" autocomplete="email" />
       <label>PIN (4–6 digits)
         <button type="button" class="pin-toggle" onclick="Auth.togglePIN('init-pin', this)">👁</button>
       </label>
@@ -128,6 +125,13 @@
 
       <div class="cards-row" id="today-cards">
         <!-- injected by dashboard.js -->
+      </div>
+
+      <div class="chart-wrap">
+        <div class="chart-title">Duties This Month</div>
+        <div class="chart-canvas-wrap">
+          <canvas id="duties-chart"></canvas>
+        </div>
       </div>
 
       <div class="section-heading">Today's Duty — <span id="today-date-label"></span></div>
@@ -202,17 +206,32 @@
   <!-- ADMIN (Senior PGR and Senior Resident) -->
   <section id="page-admin" class="page">
     <div class="page-inner">
-      <h2>Admin Panel</h2>
-      <div class="admin-grid">
-        <!-- PGR Management (senior_pgr only; senior_resident gets replaced via JS) -->
-        <div class="admin-card">
-          <h3>PGR List</h3>
-          <div id="pgr-list-table"></div>
-        </div>
-        <!-- Pending Invites -->
+      <div class="page-toolbar">
+        <h2>Admin Panel</h2>
+      </div>
+
+      <!-- Tab nav -->
+      <div class="admin-tabs-nav">
+        <button class="admin-tab-btn active" data-tab="team"     onclick="Admin.switchTab('team')">Team</button>
+        <button class="admin-tab-btn"         data-tab="invites"  onclick="Admin.switchTab('invites')">Invites</button>
+        <button class="admin-tab-btn"         data-tab="settings" onclick="Admin.switchTab('settings')">Settings</button>
+        <button class="admin-tab-btn"         data-tab="log"      onclick="Admin.switchTab('log')">Log</button>
+      </div>
+
+      <!-- Tab: Team -->
+      <div id="admin-tab-team" class="admin-tab-panel active">
+        <div id="pgr-list-table"></div>
+      </div>
+
+      <!-- Tab: Invites -->
+      <div id="admin-tab-invites" class="admin-tab-panel">
         <div id="pending-invites-section"></div>
-        <!-- Unit Configuration -->
-        <div class="admin-card">
+      </div>
+
+      <!-- Tab: Settings -->
+      <div id="admin-tab-settings" class="admin-tab-panel">
+        <!-- Units -->
+        <div class="admin-section">
           <h3>Units / Bays</h3>
           <div id="unit-list"></div>
           <div class="inline-form">
@@ -220,25 +239,28 @@
             <button class="btn btn-primary btn-sm" onclick="Admin.addUnit()">Add</button>
           </div>
         </div>
-        <!-- Shift Config -->
-        <div class="admin-card">
-          <h3>Shift Settings</h3>
-          <label>Mode</label>
-          <select id="shift-mode-select" onchange="Admin.saveShiftMode()">
-            <option value="3">3 Shifts (M/E/N)</option>
-            <option value="2">2 Shifts (Day/Night)</option>
+        <!-- Shift & Duty Config -->
+        <div class="admin-section">
+          <h3>Shift &amp; Duty Settings</h3>
+          <label>Shift Mode</label>
+          <select id="shift-mode-select" class="w-auto" onchange="Admin.saveShiftMode()">
+            <option value="3">3 Shifts (Morning / Evening / Night)</option>
+            <option value="2">2 Shifts (Day / Night)</option>
           </select>
           <label>Max Bays per PGR (default)</label>
-          <input type="number" id="max-bays-input" min="1" max="10" value="2" onchange="Admin.saveMaxBays()" />
-          <label>Min duties/month per PGR (global default)</label>
-          <input type="number" id="min-duties-input" min="1" max="31" value="8" onchange="Admin.saveMinDuties()" />
-          <label style="margin-top:.75rem">Years of PGR training</label>
+          <input type="number" id="max-bays-input" min="1" max="10" value="2" style="width:80px" onchange="Admin.saveMaxBays()" />
+          <label>Global fallback — Min duties / month</label>
+          <input type="number" id="min-duties-input" min="1" max="31" value="8" style="width:80px" onchange="Admin.saveMinDuties()" />
+          <label>Years of PGR training</label>
           <input type="number" id="num-years-input" min="1" max="10" value="4" style="width:72px" onchange="Admin.saveNumYears()" />
-          <label style="margin-top:.75rem">Min duties by year of training</label>
-          <div id="year-duties-container" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center"></div>
+          <label style="margin-top:1rem">Min duties by year of training <small style="font-weight:normal;opacity:.6">(overrides global fallback)</small></label>
+          <div id="year-duties-container" class="year-duties-grid"></div>
         </div>
-        <!-- Replacement Log -->
-        <div class="admin-card">
+      </div>
+
+      <!-- Tab: Log -->
+      <div id="admin-tab-log" class="admin-tab-panel">
+        <div class="admin-section">
           <h3>Replacement Log</h3>
           <div id="replacement-log"></div>
         </div>
@@ -256,8 +278,8 @@
       <div class="modal-body">
         <label>Name</label>
         <input type="text" id="pgr-name-input" />
-        <label>Username</label>
-        <input type="text" id="pgr-username-input" readonly style="opacity:.6" />
+        <label>Email</label>
+        <input type="email" id="pgr-email-input" readonly style="opacity:.6" />
         <label>Role</label>
         <select id="pgr-role-input">
           <option value="pgr">PGR</option>
@@ -310,6 +332,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
 <!-- Firebase project config (fill in YOUR values) -->
 <script src="firebase-config.js"></script>
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <!-- App modules -->
 <script src="js/db.js"></script>
 <script src="js/auth.js"></script>

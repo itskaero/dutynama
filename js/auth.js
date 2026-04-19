@@ -1,34 +1,25 @@
 /**
- * auth.js  Username + PIN authentication
+ * auth.js  Email + PIN authentication
  *
  * Flow:
- *   Initial setup   Senior PGR creates the first admin account (one-time).
- *   Claim Invite    Invited user uses username + setup code given by Senior PGR, sets own PIN.
- *   Login           username + PIN
+ *   Initial setup   Senior PGR creates the first admin account (one-time) with their email.
+ *   Claim Invite    Invited user uses their email (as registered by Senior PGR), sets own PIN.
+ *   Login           email + PIN
  *   Change PIN      current PIN + new PIN
  *
- * Usernames are mapped to Firebase Auth emails internally:
- *   {username}@dutynama.local  (never shown to users  purely a Firebase Auth key)
- *
+ * Firebase Auth email = user's real email address.
  * PIN + salt is stored as the Firebase Auth password.
  * Roles: senior_pgr | pgr | senior_resident | viewer
- *
- * Senior PGR responsibilities:
- *   - Creates invites for all new users (any role) from the Admin panel.
- *   - Can transfer Senior PGR role to any other user.
- *   - Invited users receive a username + 6-char setup code from the Senior PGR.
  */
 
 const Auth = (() => {
 
-  const _DOMAIN = '@dutynama.local';
-  const _SALT   = '__DN2026x';
+  const _SALT = '__DN2026x';
 
   let _profile = null;
 
-  //  Helpers 
-  function _userEmail(username) { return username.toLowerCase() + _DOMAIN; }
-  function _fbPass(pin)         { return pin + _SALT; }
+  //  Helpers
+  function _fbPass(pin) { return pin + _SALT; }
 
   function _setMsg(msg, isError = false) {
     const el = document.getElementById('auth-message');
@@ -47,10 +38,10 @@ const Auth = (() => {
   function _friendlyError(e) {
     const c = e.code || '';
     if (c === 'auth/user-not-found' || c === 'auth/wrong-password' || c === 'auth/invalid-credential')
-      return 'Invalid username or PIN.';
+      return 'Invalid email or PIN.';
     if (c === 'auth/email-already-in-use')
-      return 'This username is already taken.';
-    if (c === 'auth/invalid-email')     return 'Invalid username format.';
+      return 'An account with this email already exists.';
+    if (c === 'auth/invalid-email')     return 'Invalid email address.';
     if (c === 'auth/too-many-requests') return 'Too many attempts. Try again later.';
     if (c === 'auth/network-request-failed') return 'Network error. Check your connection.';
     return e.message || 'An error occurred.';
@@ -65,64 +56,60 @@ const Auth = (() => {
     _setMsg('');
   }
 
-  function showLogin()        { _setBtnLoading('btn-login', false, 'Login');               _setMode('login'); }
-  function showSetup()        { _setBtnLoading('btn-setup', false, 'Create Account');      _setMode('setup'); }
-  function showInitialSetup() { _setBtnLoading('btn-init',  false, 'Create Admin Account'); _setMode('init'); }
+  function showLogin()        { _setBtnLoading('btn-login', false, 'Login');                _setMode('login'); }
+  function showSetup()        { _setBtnLoading('btn-setup', false, 'Create Account');       _setMode('setup'); }
+  function showInitialSetup() { _setBtnLoading('btn-init',  false, 'Create Admin Account');  _setMode('init'); }
 
-  //  Login 
+  //  Login
   async function login() {
-    const username = document.getElementById('login-username').value.trim().toLowerCase();
-    const pin      = document.getElementById('login-pin').value.trim();
+    const email = document.getElementById('login-email').value.trim().toLowerCase();
+    const pin   = document.getElementById('login-pin').value.trim();
 
-    if (!username || !pin) { _setMsg('Enter username and PIN.', true); return; }
-    if (!/^\d{4,6}$/.test(pin)) { _setMsg('PIN is 46 digits.', true); return; }
+    if (!email || !pin) { _setMsg('Enter email and PIN.', true); return; }
+    if (!/^\d{4,6}$/.test(pin)) { _setMsg('PIN must be 4–6 digits.', true); return; }
 
-    console.log('[Auth] login(): username =', username);
+    console.log('[Auth] login(): email =', email);
     _setBtnLoading('btn-login', true, 'Login');
     try {
-      await firebase.auth().signInWithEmailAndPassword(_userEmail(username), _fbPass(pin));
-      console.log('[Auth] login(): Firebase Auth OK  handoff to onAuthStateChanged');
-      // onAuthStateChanged in app.js completes the login
+      await firebase.auth().signInWithEmailAndPassword(email, _fbPass(pin));
+      console.log('[Auth] login(): Firebase Auth OK — handoff to onAuthStateChanged');
     } catch (e) {
-      console.warn('[Auth] login(): failed ', e.code, e.message);
+      console.warn('[Auth] login(): failed', e.code, e.message);
       _setMsg(_friendlyError(e), true);
       _setBtnLoading('btn-login', false, 'Login');
     }
   }
 
-  //  Claim Invite (invited user sets their own PIN) 
+  //  Claim Invite (invited user sets their own PIN)
   async function setupAccount() {
-    const username  = document.getElementById('setup-username').value.trim().toLowerCase();
-    const setupCode = document.getElementById('setup-code').value.trim().toUpperCase();
-    const pin       = document.getElementById('setup-pin').value.trim();
-    const confirm   = document.getElementById('setup-confirm').value.trim();
+    const email   = document.getElementById('setup-email').value.trim().toLowerCase();
+    const pin     = document.getElementById('setup-pin').value.trim();
+    const confirm = document.getElementById('setup-confirm').value.trim();
 
-    if (!username || !setupCode || !pin || !confirm) { _setMsg('Fill all fields.', true); return; }
+    if (!email || !pin || !confirm)  { _setMsg('Fill all fields.', true); return; }
     if (pin !== confirm)             { _setMsg('PINs do not match.', true); return; }
-    if (!/^\d{4,6}$/.test(pin))     { _setMsg('PIN must be 46 digits.', true); return; }
-    if (setupCode.length !== 6)     { _setMsg('Setup code is 6 characters.', true); return; }
+    if (!/^\d{4,6}$/.test(pin))     { _setMsg('PIN must be 4–6 digits.', true); return; }
+    if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) { _setMsg('Enter a valid email address.', true); return; }
 
-    console.log('[Auth] setupAccount(): username =', username, '| code =', setupCode);
+    console.log('[Auth] setupAccount(): email =', email);
     _setBtnLoading('btn-setup', true, 'Create Account');
     try {
-      // Invite doc ID = setupCode (acts as the invite token)
-      console.log('[Auth] setupAccount(): fetching invite doc');
-      const inviteSnap = await firebase.firestore()
-        .collection('pendingUsers').doc(setupCode).get();
+      // Find invite by email field
+      console.log('[Auth] setupAccount(): querying invite doc by email');
+      const snap = await firebase.firestore()
+        .collection('pendingUsers').where('email', '==', email).limit(1).get();
 
-      if (!inviteSnap.exists) {
-        throw { message: 'Invalid setup code. Ask your Senior PGR for the correct code.' };
+      if (snap.empty) {
+        throw { message: 'No invite found for this email. Ask your Senior PGR to invite you.' };
       }
-      const invite = inviteSnap.data();
-      if (invite.username !== username) {
-        throw { message: 'Username does not match this setup code. Check with your Senior PGR.' };
-      }
-      console.log('[Auth] setupAccount(): invite valid ', invite.name, 'role:', invite.role);
+      const inviteSnap = snap.docs[0];
+      const invite     = inviteSnap.data();
+      console.log('[Auth] setupAccount(): invite valid —', invite.name, 'role:', invite.role);
 
-      // Build profile  uid filled in after Firebase Auth account is created
+      // Build profile — uid filled in after Firebase Auth account is created
       const profileData = {
         uid: null, id: null,
-        username,
+        email,
         name:      invite.name,
         role:      invite.role,
         year:      invite.year || null,
@@ -139,7 +126,7 @@ const Auth = (() => {
 
       console.log('[Auth] setupAccount(): creating Firebase Auth account');
       const cred = await firebase.auth()
-        .createUserWithEmailAndPassword(_userEmail(username), _fbPass(pin));
+        .createUserWithEmailAndPassword(email, _fbPass(pin));
       const uid  = cred.user.uid;
       profileData.uid = uid;
       profileData.id  = uid;
@@ -164,26 +151,24 @@ const Auth = (() => {
     }
   }
 
-  //  Initial Setup (very first run  creates Senior PGR) 
+  //  Initial Setup (very first run — creates Senior PGR)
   async function initialSetup() {
-    const name     = document.getElementById('init-name').value.trim();
-    const username = document.getElementById('init-username').value.trim().toLowerCase();
-    const pin      = document.getElementById('init-pin').value.trim();
-    const confirm  = document.getElementById('init-confirm').value.trim();
+    const name    = document.getElementById('init-name').value.trim();
+    const email   = document.getElementById('init-email').value.trim().toLowerCase();
+    const pin     = document.getElementById('init-pin').value.trim();
+    const confirm = document.getElementById('init-confirm').value.trim();
 
-    if (!name || !username || !pin) { _setMsg('Fill all fields.', true); return; }
-    if (pin !== confirm)            { _setMsg('PINs do not match.', true); return; }
-    if (!/^\d{4,6}$/.test(pin))    { _setMsg('PIN must be 46 digits.', true); return; }
-    if (!/^[a-z0-9][a-z0-9._-]*$/.test(username) || username.length < 2 || username.length > 20) {
-      _setMsg('Username: 220 chars, letters/digits/dots/hyphens, must start with a letter or digit.', true); return;
-    }
+    if (!name || !email || !pin) { _setMsg('Fill all fields.', true); return; }
+    if (pin !== confirm)         { _setMsg('PINs do not match.', true); return; }
+    if (!/^\d{4,6}$/.test(pin)) { _setMsg('PIN must be 4–6 digits.', true); return; }
+    if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) { _setMsg('Enter a valid email address.', true); return; }
 
-    console.log('[Auth] initialSetup(): name =', name, '| username =', username);
+    console.log('[Auth] initialSetup(): name =', name, '| email =', email);
     _setBtnLoading('btn-init', true, 'Create Admin Account');
     try {
       const profileData = {
         uid: null, id: null,
-        username, name,
+        email, name,
         role: 'senior_pgr', minDuties: 8,
         createdAt: new Date().toISOString(),
       };
@@ -193,7 +178,7 @@ const Auth = (() => {
 
       console.log('[Auth] initialSetup(): creating Firebase Auth account');
       const cred = await firebase.auth()
-        .createUserWithEmailAndPassword(_userEmail(username), _fbPass(pin));
+        .createUserWithEmailAndPassword(email, _fbPass(pin));
       const uid  = cred.user.uid;
       profileData.uid = uid;
       profileData.id  = uid;
@@ -268,9 +253,9 @@ const Auth = (() => {
     const role = _profile.role;
     const map  = {
       editRoster:    ['senior_pgr'],
-      manageLeaves:  ['senior_pgr', 'senior_resident'],
-      manageReplace: ['senior_pgr', 'senior_resident'],
-      applyLeave:    ['pgr', 'senior_pgr', 'senior_resident'],
+      manageLeaves:  ['senior_resident'],
+      manageReplace: ['senior_resident'],
+      applyLeave:    ['senior_resident'],
       setPrefs:      ['pgr', 'senior_pgr'],
       admin:         ['senior_pgr', 'senior_resident'],
       viewDashboard: ['senior_pgr', 'pgr', 'senior_resident', 'viewer'],

@@ -22,16 +22,17 @@ const Admin = (() => {
       renderUnitList();
       renderShiftSettings();
       renderReplacementLog();
+      switchTab('team');
     }
   }
 
-  // ── Setup code generator ──────────────────────────────
-  function _genSetupCode() {
-    // 6 uppercase chars from an unambiguous alphabet (no 0/O, 1/I confusion)
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-    return code;
+  function switchTab(name) {
+    document.querySelectorAll('.admin-tab-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === name);
+    });
+    document.querySelectorAll('.admin-tab-panel').forEach(panel => {
+      panel.classList.toggle('active', panel.id === 'admin-tab-' + name);
+    });
   }
 
   // ── PGR List (Senior PGR only) ────────────────────────
@@ -192,8 +193,8 @@ const Admin = (() => {
     const pgr = DB.getPGR(id);
     if (!pgr) return;
     document.getElementById('pgr-modal-title').textContent       = 'Edit Team Member';
-    document.getElementById('pgr-name-input').value              = pgr.name;
-    document.getElementById('pgr-username-input').value          = pgr.username || pgr.email || '';
+    document.getElementById('pgr-name-input').value  = pgr.name;
+    document.getElementById('pgr-email-input').value = pgr.email || '';
     document.getElementById('pgr-role-input').value              = pgr.role;
     document.getElementById('pgr-min-duties-input').value        = pgr.minDuties ?? DB.getEffectiveMinDuties(pgr);
     document.getElementById('pgr-edit-id').value                 = pgr.id;
