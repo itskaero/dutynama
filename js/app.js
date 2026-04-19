@@ -18,6 +18,11 @@ const App = (() => {
 
   // ── Called after Firebase Auth confirms a logged-in user ──
   async function _afterFirebaseLogin(firebaseUser) {
+    // Guard: initialSetup/setupAccount set the profile synchronously before
+    // their first await, so by the time this callback runs the profile is
+    // already set and the login sequence is being handled — nothing to do.
+    if (Auth.currentUser()) return;
+
     _showLoading('Loading your data…');
 
     // Hard timeout — Firebase Firestore can buffer requests silently when the
@@ -43,8 +48,6 @@ const App = (() => {
   }
 
   async function _doAfterLogin(firebaseUser) {
-    // Guard: if initialSetup/setupAccount already completed login directly, nothing to do.
-    if (Auth.currentUser()) return;
 
     // Load Firestore profile — retry a few times to handle the race where
     // onAuthStateChanged fires before the initial-setup writes complete.

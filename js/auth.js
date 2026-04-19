@@ -108,7 +108,6 @@ const Auth = (() => {
       const cred = await firebase.auth().createUserWithEmailAndPassword(email, _fbPass(pin));
       const uid  = cred.user.uid;
 
-      // Write user profile to Firestore
       const profileData = {
         uid, id: uid,
         name:       pending.name,
@@ -119,14 +118,14 @@ const Auth = (() => {
         createdAt:  new Date().toISOString(),
         createdBy:  pending.createdBy || '',
       };
-      await firebase.firestore().collection('users').doc(uid).set(profileData);
 
-      // Remove from pending
+      // Set profile BEFORE the first await so onAuthStateChanged sees
+      // currentUser() as non-null and skips its own login sequence.
+      Auth.setProfile(profileData);
+
+      await firebase.firestore().collection('users').doc(uid).set(profileData);
       await pendingDoc.ref.delete();
 
-      // Complete login directly — avoids onAuthStateChanged race where the
-      // listener fires before the profile write has finished.
-      Auth.setProfile(profileData);
       await DB.init();
       App.onLogin(profileData);
 
@@ -158,6 +157,11 @@ const Auth = (() => {
         createdAt: new Date().toISOString(),
       };
 
+      // Set profile BEFORE the first await so that the onAuthStateChanged
+      // callback (which fires as soon as createUserWithEmailAndPassword resolves)
+      // sees currentUser() as non-null and skips its own login sequence.
+      Auth.setProfile(profileData);
+
       await firebase.firestore().collection('users').doc(uid).set(profileData);
 
       // Write default config
@@ -171,9 +175,6 @@ const Auth = (() => {
         shiftMode: 3, maxBaysPerPGR: 2, minDutiesPerMonth: 8,
       });
 
-      // Complete login directly — avoids onAuthStateChanged race where the
-      // listener fires before these Firestore writes have finished.
-      Auth.setProfile(profileData);
       await DB.init();
       App.onLogin(profileData);
     } catch (e) {
