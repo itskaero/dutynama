@@ -26,6 +26,16 @@
  *                      && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'senior_pgr';
  *       }
  *
+ *       // Invite tokens — doc ID IS the setup code (the secret).
+ *       // Public read is safe: the code itself is the credential, and guessing
+ *       // a 6-char code from 32-char alphabet (~1 billion combos) is impractical.
+ *       // Only Senior PGR can create or revoke invites.
+ *       match /pendingUsers/{code} {
+ *         allow read: if true;
+ *         allow create, delete: if request.auth != null
+ *                               && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'senior_pgr';
+ *       }
+ *
  *       match /{document=**} {
  *         allow read, write: if request.auth != null;
  *       }

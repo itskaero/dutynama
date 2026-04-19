@@ -25,6 +25,15 @@ const Admin = (() => {
     }
   }
 
+  // ── Setup code generator ──────────────────────────────
+  function _genSetupCode() {
+    // 6 uppercase chars from an unambiguous alphabet (no 0/O, 1/I confusion)
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    return code;
+  }
+
   // ── PGR List (Senior PGR only) ────────────────────────
   function renderPGRList() {
     const me   = Auth.currentUser();
@@ -125,37 +134,50 @@ const Admin = (() => {
   }
 
   async function sendInvite() {
-    const name      = document.getElementById('inv-name').value.trim();
-    const email     = document.getElementById('inv-email').value.trim().toLowerCase();
-    const role      = document.getElementById('inv-role').value;
-    const year      = parseInt(document.getElementById('inv-year').value) || null;
-    const cfg       = DB.getConfig();
-    const yd        = cfg.yearMinDuties || {};
+    const name     = document.getElementById('inv-name').value.trim();
+    const username = document.getElementById('inv-username').value.trim().toLowerCase();
+    const role     = document.getElementById('inv-role').value;
+    const year     = parseInt(document.getElementById('inv-year').value) || null;
+    const cfg      = DB.getConfig();
+    const yd       = cfg.yearMinDuties || {};
     const defaultMin = year ? (yd[year] ?? cfg.minDutiesPerMonth) : cfg.minDutiesPerMonth;
-    const minDuties = parseInt(document.getElementById('inv-duties').value) || defaultMin;
+    const minDuties  = parseInt(document.getElementById('inv-duties').value) || defaultMin;
 
-    if (!name || !email) { alert('Name and email required.'); return; }
-    if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) { alert('Invalid email.'); return; }
-
-    // Check if already a user
-    if (DB.getPGRs().find(p => p.email.toLowerCase() === email)) {
-      alert('A user with this email already exists.'); return;
+    if (!name || !username) { alert('Name and username are required.'); return; }
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(username) || username.length < 2 || username.length > 20) {
+      alert('Username: 2–20 chars, only letters/digits/dots/hyphens, must start with a letter or digit.');
+      return;
     }
 
+    // Check if username already taken
+    if (DB.getPGRs().find(p => (p.username || '').toLowerCase() === username)) {
+      alert('A user with this username already exists.'); return;
+    }
+
+    const setupCode = _genSetupCode();
     const btn = document.querySelector('#pending-invites-section .btn-primary');
-    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
 
     try {
       await DB.addPendingUser({
-        name, email, role, year, minDuties,
+        name, username, role, year, minDuties,
         createdBy: Auth.currentUser()?.uid || '',
+        setupCode,
       });
-      document.getElementById('inv-name').value  = '';
-      document.getElementById('inv-email').value = '';
+      document.getElementById('inv-name').value     = '';
+      document.getElementById('inv-username').value = '';
+
+      alert(
+        `✅ Invite created!\n\n` +
+        `Tell ${name} to click “Claim Invite” on the login screen and enter:\n` +
+        `  Username:    ${username}\n` +
+        `  Setup Code:  ${setupCode}\n\n` +
+        `They will then choose their own PIN.`
+      );
       await renderPendingInvites();
     } catch (e) {
       alert('Error: ' + e.message);
-      if (btn) { btn.disabled = false; btn.textContent = 'Send Invite'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Create Invite'; }
     }
   }
 
@@ -169,18 +191,17 @@ const Admin = (() => {
   function openEditPGR(id) {
     const pgr = DB.getPGR(id);
     if (!pgr) return;
-    document.getElementById('pgr-modal-title').textContent = 'Edit PGR';
-    document.getElementById('pgr-name-input').value        = pgr.name;
-    document.getElementById('pgr-email-input').value       = pgr.email;
-    document.getElementById('pgr-role-input').value        = pgr.role;
-    document.getElementById('pgr-year-input').value        = pgr.year || '';
+    document.getElementById('pgr-modal-title').textContent       = 'Edit Team Member';
+    document.getElementById('pgr-name-input').value              = pgr.name;
+    document.getElementById('pgr-username-input').value          = pgr.username || pgr.email || '';
+    document.getElementById('pgr-role-input').value              = pgr.role;
+    document.getElementById('pgr-min-duties-input').value        = pgr.minDuties ?? DB.getEffectiveMinDuties(pgr);
+    document.getElementById('pgr-edit-id').value                 = pgr.id;
     // Rebuild year options in case numYears changed since modal was last opened
     const yearSel = document.getElementById('pgr-year-input');
     yearSel.innerHTML = '<option value="">Not set</option>' +
       DB.getYears().map(y => `<option value="${y}">Year ${y}</option>`).join('');
     yearSel.value = pgr.year || '';
-    document.getElementById('pgr-min-duties-input').value  = pgr.minDuties ?? DB.getEffectiveMinDuties(pgr);
-    document.getElementById('pgr-edit-id').value           = pgr.id;
     document.getElementById('pgr-modal').classList.remove('hidden');
     document.getElementById('overlay').classList.remove('hidden');
   }

@@ -34,20 +34,22 @@ const DB = (() => {
 
   // ── Init: load all data from Firestore + attach listeners ─
   async function init() {
-    // Config
+    console.log('[DB] init(): fetching config/main');
     const cfgSnap = await fs().doc('config/main').get();
     C.config = cfgSnap.exists ? cfgSnap.data() : _defaultConfig();
+    console.log('[DB] init(): config loaded, exists:', cfgSnap.exists);
 
     // All parallel fetches (alerts loaded without orderBy to avoid index delays;
     // sorted client-side in getAlerts())
+    console.log('[DB] init(): fetching all collections in parallel');
     const [usersSnap, rosterSnap, leavesSnap, prefsSnap, alertsSnap, cfwdSnap] =
       await Promise.all([
-        fs().collection('users').get(),
-        fs().collection('roster').get(),
-        fs().collection('leaves').get(),
-        fs().collection('prefs').get(),
-        fs().collection('alerts').limit(200).get(),
-        fs().collection('carryFwd').get(),
+        fs().collection('users').get().then(s    => { console.log('[DB] init(): users fetched, count:', s.size); return s; }),
+        fs().collection('roster').get().then(s   => { console.log('[DB] init(): roster fetched, count:', s.size); return s; }),
+        fs().collection('leaves').get().then(s   => { console.log('[DB] init(): leaves fetched, count:', s.size); return s; }),
+        fs().collection('prefs').get().then(s    => { console.log('[DB] init(): prefs fetched, count:', s.size); return s; }),
+        fs().collection('alerts').limit(200).get().then(s => { console.log('[DB] init(): alerts fetched, count:', s.size); return s; }),
+        fs().collection('carryFwd').get().then(s => { console.log('[DB] init(): carryFwd fetched, count:', s.size); return s; }),
       ]);
 
     C.users    = usersSnap.docs.map(_norm);
@@ -58,6 +60,7 @@ const DB = (() => {
     C.carryFwd = {};
     cfwdSnap.docs.forEach(d => { C.carryFwd[d.id] = d.data().value; });
 
+    console.log('[DB] init(): attaching real-time listeners');
     // Real-time listeners
     _unsubs.push(
       fs().collection('users').onSnapshot(
@@ -80,6 +83,7 @@ const DB = (() => {
         e => console.error('[DB] alerts listener error:', e)
       ),
     );
+    console.log('[DB] init(): complete');
   }
 
   // Normalize a Firestore users doc: ensure .id === .uid
@@ -163,11 +167,17 @@ const DB = (() => {
     return snap.docs.map(d => ({ _docId: d.id, ...d.data() }));
   }
 
-  async function addPendingUser({ name, email, role, year, minDuties, createdBy }) {
-    const ref = fs().collection('pendingUsers').doc();
-    await ref.set({ name, email: email.toLowerCase(), role, year: year || null,
-                    minDuties, createdBy, createdAt: new Date().toISOString() });
-    return ref.id;
+  async function addPendingUser({ name, username, role, year, minDuties, createdBy, setupCode }) {
+    // setupCode is used as the document ID — it acts as the invite token.
+    await fs().collection('pendingUsers').doc(setupCode).set({
+      name, username, role,
+      year:       year || null,
+      minDuties:  minDuties ?? null,
+      createdBy,
+      setupCode,
+      createdAt:  new Date().toISOString(),
+    });
+    return setupCode;
   }
 
   async function deletePendingUser(docId) {

@@ -21,7 +21,12 @@ const App = (() => {
     // Guard: initialSetup/setupAccount set the profile synchronously before
     // their first await, so by the time this callback runs the profile is
     // already set and the login sequence is being handled — nothing to do.
-    if (Auth.currentUser()) return;
+    console.log('[App] _afterFirebaseLogin(): uid =', firebaseUser.uid,
+                '| currentUser already set =', !!Auth.currentUser());
+    if (Auth.currentUser()) {
+      console.log('[App] _afterFirebaseLogin(): guard hit — profile already set, skipping');
+      return;
+    }
 
     _showLoading('Loading your data…');
 
@@ -48,31 +53,36 @@ const App = (() => {
   }
 
   async function _doAfterLogin(firebaseUser) {
+    console.log('[App] _doAfterLogin(): uid =', firebaseUser.uid);
 
     // Load Firestore profile — retry a few times to handle the race where
     // onAuthStateChanged fires before the initial-setup writes complete.
     let snap = null;
     for (let attempt = 0; attempt < 4; attempt++) {
+      console.log('[App] _doAfterLogin(): profile fetch attempt', attempt + 1);
       snap = await firebase.firestore().collection('users').doc(firebaseUser.uid).get();
       if (snap.exists) break;
+      console.log('[App] _doAfterLogin(): profile not found, retrying...');
       await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
     }
     if (!snap.exists) {
-      // Profile still missing after retries — sign out and show login
+      console.warn('[App] _doAfterLogin(): profile missing after retries, signing out');
       await firebase.auth().signOut();
       _hideLoading();
       Auth.showLogin();
       Auth.showAuthError('Account setup incomplete. Please create your account again.');
       return;
     }
+    console.log('[App] _doAfterLogin(): profile loaded, role =', snap.data().role);
     const profile = snap.data();
     profile.id  = profile.uid || firebaseUser.uid;
     profile.uid = profile.id;
     Auth.setProfile(profile);
 
-    // Load all data into cache
+    console.log('[App] _doAfterLogin(): calling DB.init()');
     await DB.init();
 
+    console.log('[App] _doAfterLogin(): calling onLogin()');
     onLogin(profile);
   }
 
