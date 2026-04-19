@@ -92,13 +92,14 @@ const App = (() => {
           }
         } catch (e) {
           const code = e.code || '';
-          // 'permission-denied' → Firestore rules require auth = app is already configured → login
-          // 'unavailable'       → client offline → assume configured → login
-          // anything else       → unexpected (bad project config etc.) → show init setup
-          if (code === 'permission-denied' || code === 'unavailable') {
+          if (code === 'unavailable') {
+            // Offline — can't determine state, show login as safe fallback
             Auth.showLogin();
           } else {
-            console.warn('[DutyNama] Firestore check failed:', code, e.message);
+            // permission-denied (rules block unauth reads) OR any other error:
+            // We can't read config/main, so we can't know if DB is set up.
+            // Show init setup — it has its own guard (createUserWithEmailAndPassword
+            // will fail with 'email-already-in-use' if an account already exists).
             Auth.showInitialSetup();
           }
         }
