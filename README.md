@@ -24,9 +24,9 @@ This app needs a Firebase project. The free Spark plan is more than enough.
 1. Go to [console.firebase.google.com](https://console.firebase.google.com) and create a new project
 2. Add a **Web App** (the `</>` icon on the project overview page)
 3. Enable **Email/Password** authentication:
-   `Build → Authentication → Sign-in method → Email/Password → Enable`
+   `Authentication → Sign-in method → Email/Password → Enable`
 4. Create a **Firestore database**:
-   `Build → Firestore Database → Create database → Start in test mode`
+   `Firestore Database → Create database → Start in test mode`
 5. Paste these security rules under `Firestore → Rules`:
    ```
    rules_version = '2';
