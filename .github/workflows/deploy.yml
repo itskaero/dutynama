@@ -71,8 +71,5 @@ jobs:
       #        and uncomment this block when ready.
       #
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-         with:
-           github_token: ${{ secrets.GITHUB_TOKEN }}
-           publish_dir:  ./
-           exclude_assets: '.github,README.md'
+        id: deployment
+        uses: actions/deploy-pages@v4
