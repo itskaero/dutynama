@@ -29,7 +29,7 @@ jobs:
             -e "s|YOUR_STORAGE_BUCKET|${FIREBASE_STORAGE_BUCKET}|g" \
             -e "s|YOUR_MESSAGING_SENDER_ID|${FIREBASE_MESSAGING_SENDER_ID}|g" \
             -e "s|YOUR_APP_ID|${FIREBASE_APP_ID}|g" \
-            firebase-config.js
+            firebase-config.template.js > firebase-config.js
 
       # ── 3. Verify no placeholders remain (fail fast if a secret is missing)
       - name: Verify no placeholders remain
