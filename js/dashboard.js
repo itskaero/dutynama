@@ -178,33 +178,88 @@ const Dashboard = (() => {
     const canvas = document.getElementById('duties-chart');
     if (!canvas || typeof Chart === 'undefined') return;
 
-    const ym   = RosterEngine.currentYM();
-    const pgrs = DB.getPGRs();
-    const labels = pgrs.map(p => p.name.split(' ')[0]);
-    const data   = pgrs.map(p => DB.countDutiesForPGR(p.id, ym));
+    // Always use real current month, not roster navigation
+    const ym   = todayStr().slice(0, 7);
+    const pgrs = DB.getPGRs()
+      .filter(p => ['pgr', 'senior_pgr'].includes(p.role))
+      .sort((a, b) => (a.year || 99) - (b.year || 99) || a.name.localeCompare(b.name));
+
+    const labels  = pgrs.map(p => p.year ? `${p.name.split(' ')[0]} Y${p.year}` : p.name.split(' ')[0]);
+    const duties  = pgrs.map(p => DB.countDutiesForPGR(p.id, ym));
+    const targets = pgrs.map(p => DB.getEffectiveMinDuties(p));
+
+    // Per-bar colour: green = at/over target, amber = within 2, red = under
+    const barColors = pgrs.map((p, i) => {
+      const d = duties[i], t = targets[i];
+      if (d >= t)       return 'rgba(63,185,80,0.65)';
+      if (d >= t - 2)   return 'rgba(245,158,11,0.65)';
+      return 'rgba(248,113,113,0.65)';
+    });
+    const borderColors = pgrs.map((p, i) => {
+      const d = duties[i], t = targets[i];
+      if (d >= t)     return '#3fb950';
+      if (d >= t - 2) return '#f59e0b';
+      return '#f87171';
+    });
 
     if (canvas._chartInstance) canvas._chartInstance.destroy();
     canvas._chartInstance = new Chart(canvas, {
-      type: 'bar',
       data: {
         labels,
-        datasets: [{
-          label: 'Duties',
-          data,
-          backgroundColor: 'rgba(56,139,253,0.55)',
-          borderColor: '#388bfd',
-          borderWidth: 1,
-          borderRadius: 4,
-        }],
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Duties done',
+            data: duties,
+            backgroundColor: barColors,
+            borderColor: borderColors,
+            borderWidth: 1,
+            borderRadius: 4,
+            order: 2,
+          },
+          {
+            type: 'line',
+            label: 'Target',
+            data: targets,
+            borderColor: 'rgba(139,92,246,0.7)',
+            backgroundColor: 'transparent',
+            borderWidth: 1.5,
+            borderDash: [4, 3],
+            pointRadius: 3,
+            pointBackgroundColor: 'rgba(139,92,246,0.9)',
+            tension: 0,
+            order: 1,
+          },
+        ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: '#8b949e', font: { size: 11 }, boxWidth: 14 },
+          },
+          tooltip: {
+            callbacks: {
+              label: ctx => ctx.dataset.type === 'line'
+                ? ` Target: ${ctx.parsed.y}`
+                : ` Duties: ${ctx.parsed.y}`,
+              afterLabel: (ctx) => {
+                if (ctx.dataset.type !== 'bar') return '';
+                const diff = duties[ctx.dataIndex] - targets[ctx.dataIndex];
+                return diff === 0 ? ' ✓ On target'
+                     : diff > 0  ? ` +${diff} over target`
+                     : ` ${diff} below target`;
+              },
+            },
+          },
+        },
         scales: {
           x: {
             grid: { color: 'rgba(48,54,61,0.6)' },
-            ticks: { color: '#8b949e', font: { size: 11 } },
+            ticks: { color: '#8b949e', font: { size: 10 } },
           },
           y: {
             grid: { color: 'rgba(48,54,61,0.6)' },

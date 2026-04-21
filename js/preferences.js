@@ -8,12 +8,62 @@ const Preferences = (() => {
   let _dirty    = false;
 
   function render() {
-    const user = Auth.currentUser();
-    const ym   = RosterEngine.currentYM();
-    const pref = DB.getPrefForPGR(user.id);
-    _selected  = new Set(pref.offDays.filter(d => d.startsWith(ym)));
-    _dirty     = false;
+    const user  = Auth.currentUser();
+    const ym    = RosterEngine.currentYM();
+    const pref  = DB.getPrefForPGR(user.id);
+    _selected   = new Set(pref.offDays.filter(d => d.startsWith(ym)));
+    _dirty      = false;
     _renderCalendar(ym);
+    _renderBayInfo(pref);
+  }
+
+  function _renderBayInfo(pref) {
+    const section = document.getElementById('pref-bay-info');
+    if (!section) return;
+    const units    = DB.getUnits();
+    if (!units.length) { section.innerHTML = ''; return; }
+
+    const excluded  = pref.excludedBays   || [];
+    const priorities = pref.bayPriorities || [];
+    const allowed   = units.filter(u => !excluded.includes(u.id));
+
+    // Build ordered list of allowed bays
+    const ordered = [
+      ...priorities.filter(id => allowed.some(u => u.id === id)).map(id => units.find(u => u.id === id)),
+      ...allowed.filter(u => !priorities.includes(u.id)),
+    ].filter(Boolean);
+
+    let html = `<div class="bay-info-panel">
+      <h4 style="margin:0 0 .4rem">My Bay Assignments</h4>`;
+
+    if (excluded.length) {
+      html += `<p class="muted" style="font-size:.78rem;margin:0 0 .5rem">
+        <strong>Cannot be assigned to:</strong>
+        ${excluded.map(id => units.find(u => u.id === id)?.name || id).join(', ')}
+      </p>`;
+    }
+
+    if (ordered.length) {
+      html += `<p class="muted" style="font-size:.78rem;margin:0 0 .5rem">
+        <strong>Preferred assignment order:</strong></p>
+      <div class="bay-priority-list" style="pointer-events:none;opacity:.85">`;
+      ordered.forEach((unit, idx) => {
+        html += `<div class="bay-prio-row">
+          <span class="bay-prio-num">${idx + 1}</span>
+          <span class="bay-prio-name">${unit.name}</span>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (!excluded.length && !priorities.length) {
+      html += `<p class="muted" style="font-size:.78rem">No bay preferences set by admin yet.</p>`;
+    }
+
+    html += `<p class="muted" style="font-size:.72rem;margin-top:.6rem;opacity:.65">
+      Bay preferences are set by the Senior PGR. Contact them to update.</p>
+    </div>`;
+    section.innerHTML = html;
   }
 
   function _renderCalendar(ym) {

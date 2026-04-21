@@ -156,7 +156,8 @@
           <button class="btn btn-sm btn-secondary" onclick="RosterEngine.nextMonth()">Next ▶</button>
           <button class="btn btn-primary btn-sm" id="btn-auto-roster" onclick="RosterEngine.autoGenerate()">⚡ Auto-Generate</button>
           <button class="btn btn-sm btn-danger"  id="btn-clear-roster" onclick="RosterEngine.clearRoster()" style="display:none">🗑 Clear Roster</button>
-          <button class="btn btn-sm btn-secondary" id="btn-export" onclick="RosterEngine.exportCSV()">⬇ Export CSV</button>
+          <button class="btn btn-sm btn-secondary" id="btn-export" onclick="RosterEngine.exportCSV()">⬇ CSV</button>
+          <button class="btn btn-sm btn-secondary" onclick="RosterEngine.exportWord()">⬇ Word</button>
         </div>
       </div>
 
@@ -174,20 +175,35 @@
         <span class="legend-divider"></span>
         <span class="legend-section-label">Alerts &mdash;</span>
         <span class="legend-chip alert-bay">!</span> &gt;2 Bays
-        <span class="legend-chip alert-duty">!</span> Over-assigned
         <span class="legend-chip alert-24h">↺</span> 24h back-to-back
-        <span class="legend-divider"></span>
-        <span class="legend-section-label">Combined &mdash;</span>
-        <span class="legend-chip alert-both">!!</span> Bay + Over
-        <span class="legend-chip alert-24h-bay">↺!</span> 24h + Bay
-        <span class="legend-chip alert-24h-duty">↺!</span> 24h + Over
-        <span class="legend-chip alert-24h-both">↺!!</span> 24h + Bay + Over
-        <span class="legend-note">(each combo is a distinct solid colour)</span>
+        <span class="legend-chip alert-24h-bay">↺!</span> 24h + &gt;2 Bays
+        <span class="legend-note">(hover a name for details)</span>
       </div>
 
-      <div id="roster-calendar" class="roster-calendar"></div>
+      <div class="roster-layout">
+        <div id="roster-calendar" class="roster-calendar"></div>
+        <aside id="roster-pgr-panel" class="roster-pgr-panel"></aside>
+      </div>
     </div>
   </section>
+
+  <!-- MO-COVERED SLOTS MODAL -->
+  <div id="mo-slots-modal" class="modal hidden">
+    <div class="modal-box" style="width:min(520px,96vw)">
+      <div class="modal-header">
+        <h3>MO-Covered Slots</h3>
+        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('mo-slots-modal').classList.add('hidden');document.getElementById('overlay').classList.add('hidden')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="font-size:.82rem;margin-bottom:.75rem">Tick bay+shift combinations covered by MOs. These slots will be <strong>skipped</strong> during auto-generation. Your selection is remembered.</p>
+        <div id="mo-slots-grid"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="RosterEngine.runAutoGenerate()">⚡ Generate</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('mo-slots-modal').classList.add('hidden');document.getElementById('overlay').classList.add('hidden')">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <!-- DAY DETAIL MODAL (inside roster) -->
   <div id="day-modal" class="modal hidden">
@@ -243,6 +259,7 @@
       <h2>My Preferences</h2>
       <p class="muted">Mark preferred off-days. Violations raise warnings only — you can still be assigned.</p>
       <div id="pref-calendar"></div>
+      <div id="pref-bay-info"></div>
     </div>
   </section>
 
@@ -258,6 +275,7 @@
         <button class="admin-tab-btn active" data-tab="team"     onclick="Admin.switchTab('team')">Team</button>
         <button class="admin-tab-btn"         data-tab="invites"  onclick="Admin.switchTab('invites')">Invites</button>
         <button class="admin-tab-btn"         data-tab="settings" onclick="Admin.switchTab('settings')">Settings</button>
+        <button class="admin-tab-btn"         data-tab="prefs"    onclick="Admin.switchTab('prefs')">PGR Prefs</button>
         <button class="admin-tab-btn"         data-tab="log"      onclick="Admin.switchTab('log')">Log</button>
       </div>
 
@@ -298,6 +316,8 @@
           <input type="number" id="num-years-input" min="1" max="10" value="4" style="width:72px" onchange="Admin.saveNumYears()" />
           <label style="margin-top:1rem">Min duties by year of training <small style="font-weight:normal;opacity:.6">(overrides global fallback)</small></label>
           <div id="year-duties-container" class="year-duties-grid"></div>
+          <label style="margin-top:1rem">Night duties by year <small style="font-weight:normal;opacity:.6">(of the min above, how many should be Night shifts; 0 = no target)</small></label>
+          <div id="year-night-duties-container" class="year-duties-grid"></div>
         </div>
       </div>
 
@@ -307,6 +327,11 @@
           <h3>Replacement Log</h3>
           <div id="replacement-log"></div>
         </div>
+      </div>
+
+      <!-- Tab: PGR Prefs (Senior PGR sets off-day suggestions for PGRs) -->
+      <div id="admin-tab-prefs" class="admin-tab-panel">
+        <!-- populated by Admin.renderSRPrefsTab() -->
       </div>
     </div>
   </section>
@@ -336,6 +361,8 @@
         </select>
         <label>Min Duties / Month <small style="font-weight:normal;opacity:.7">(overrides year default)</small></label>
         <input type="number" id="pgr-min-duties-input" min="0" max="31" value="8" />
+        <label>Night Duties / Month <small style="font-weight:normal;opacity:.7">(overrides year default; leave blank to use year setting)</small></label>
+        <input type="number" id="pgr-night-target-input" min="0" max="31" placeholder="e.g. 3" />
         <input type="hidden" id="pgr-edit-id" />
       </div>
       <div class="modal-footer">

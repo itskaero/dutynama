@@ -114,6 +114,7 @@ const DB = (() => {
       shiftMode: 3, maxBaysPerPGR: 2, minDutiesPerMonth: 8,
       numYears: 4,
       yearMinDuties: { 1: 8, 2: 8, 3: 8, 4: 8 },
+      yearNightDuties: { 1: 0, 2: 0, 3: 0, 4: 0 },
     };
   }
 
@@ -145,6 +146,27 @@ const DB = (() => {
     if (pgr.minDuties != null && !isNaN(Number(pgr.minDuties))) return Number(pgr.minDuties);
     // Global fallback
     return cfg.minDutiesPerMonth;
+  }
+
+  // Effective off-days: PGR's own take precedence per day; SR's apply where PGR hasn't set
+  function getEffectiveOffDays(pgrId) {
+    const pref = getPrefForPGR(pgrId);
+    const own  = new Set(pref.offDays || []);
+    const sr   = pref.srOffDays || [];
+    return [...own, ...sr.filter(d => !own.has(d))];
+  }
+
+  // Night duty target: individual override → year default → 0
+  function getEffectiveNightTarget(pgr) {
+    const cfg = getConfig();
+    const yd  = cfg.yearNightDuties || {};
+    // Per-PGR override (set in Edit PGR modal)
+    if (pgr.nightTarget != null && !isNaN(Number(pgr.nightTarget))) return Number(pgr.nightTarget);
+    // Year-level default
+    if (pgr.year && yd[pgr.year] != null && !isNaN(Number(yd[pgr.year]))) {
+      return Number(yd[pgr.year]);
+    }
+    return 0;
   }
 
   // ── PGRs ───────────────────────────────────────────────
@@ -329,10 +351,38 @@ const DB = (() => {
   }
 
   async function savePrefForPGR(pgrId, offDays) {
+    const existing = C.prefs.find(p => p.pgrId === pgrId) || { pgrId };
+    const updated  = { ...existing, offDays };
     C.prefs = C.prefs.filter(p => p.pgrId !== pgrId);
-    const entry = { pgrId, offDays };
-    C.prefs.push(entry);
-    await fs().collection('prefs').doc(pgrId).set(entry);
+    C.prefs.push(updated);
+    await fs().collection('prefs').doc(pgrId).set(updated, { merge: true });
+  }
+
+  // Save Senior PGR's preferred off-days for a PGR (fallback when PGR hasn't set their own)
+  async function saveSRPrefsForPGR(pgrId, srOffDays) {
+    const existing = C.prefs.find(p => p.pgrId === pgrId) || { pgrId, offDays: [] };
+    const updated  = { ...existing, srOffDays };
+    C.prefs = C.prefs.filter(p => p.pgrId !== pgrId);
+    C.prefs.push(updated);
+    await fs().collection('prefs').doc(pgrId).set(updated, { merge: true });
+  }
+
+  // Save PGR's bay priority order (array of unitIds, most preferred first)
+  async function saveBayPrioritiesForPGR(pgrId, priorities) {
+    const existing = C.prefs.find(p => p.pgrId === pgrId) || { pgrId, offDays: [] };
+    const updated  = { ...existing, bayPriorities: priorities };
+    C.prefs = C.prefs.filter(p => p.pgrId !== pgrId);
+    C.prefs.push(updated);
+    await fs().collection('prefs').doc(pgrId).set(updated, { merge: true });
+  }
+
+  // Save bays the PGR is excluded from (cannot be assigned)
+  async function saveExcludedBaysForPGR(pgrId, excludedBays) {
+    const existing = C.prefs.find(p => p.pgrId === pgrId) || { pgrId, offDays: [] };
+    const updated  = { ...existing, excludedBays };
+    C.prefs = C.prefs.filter(p => p.pgrId !== pgrId);
+    C.prefs.push(updated);
+    await fs().collection('prefs').doc(pgrId).set(updated, { merge: true });
   }
 
   // ── ALERTS ─────────────────────────────────────────────
@@ -379,6 +429,7 @@ const DB = (() => {
     uid, init, teardown,
     // Config
     getConfig, saveConfig, getUnits, getShifts, getYears, getEffectiveMinDuties,
+    getEffectiveOffDays, getEffectiveNightTarget,
     // PGRs
     getPGRs, getPGR, upsertPGR, deletePGR,
     // Pending invites
@@ -391,7 +442,7 @@ const DB = (() => {
     getLeaves, getLeavesForPGR, getLeavesForMonth, getLeavesForDate,
     isOnLeave, applyLeave, addLeave, updateLeaveStatus, deleteLeave,
     // Prefs
-    getAllPrefs, getPrefForPGR, savePrefForPGR,
+    getAllPrefs, getPrefForPGR, savePrefForPGR, saveSRPrefsForPGR, saveBayPrioritiesForPGR, saveExcludedBaysForPGR,
     // Alerts
     getAlerts, addAlert, markAlertsSeen, clearAlerts, unseenAlertCount,
     // Carry forward

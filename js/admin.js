@@ -7,6 +7,12 @@
 
 const Admin = (() => {
 
+  // State for SR-managed PGR preference tab
+  let _srPrefPGR   = null;
+  let _srPrefSel   = new Set();
+  let _srBayOrder  = [];        // priority order — excluded bays NOT in this list
+  let _srExcluded  = new Set(); // bays this PGR cannot be assigned to
+
   function render() {
     const role = Auth.currentUser()?.role;
     if (!['senior_pgr', 'senior_registrar'].includes(role)) {
@@ -22,6 +28,7 @@ const Admin = (() => {
       renderUnitList();
       renderShiftSettings();
       renderReplacementLog();
+      renderSRPrefsTab();
       switchTab('team');
     }
   }
@@ -216,6 +223,8 @@ const Admin = (() => {
     document.getElementById('pgr-email-input').value = pgr.email || '';
     document.getElementById('pgr-role-input').value              = pgr.role;
     document.getElementById('pgr-min-duties-input').value        = pgr.minDuties ?? DB.getEffectiveMinDuties(pgr);
+    const ntEl = document.getElementById('pgr-night-target-input');
+    if (ntEl) ntEl.value = pgr.nightTarget ?? '';
     document.getElementById('pgr-edit-id').value                 = pgr.id;
     // Rebuild year options in case numYears changed since modal was last opened
     const yearSel = document.getElementById('pgr-year-input');
@@ -236,7 +245,9 @@ const Admin = (() => {
     const email     = document.getElementById('pgr-email-input').value.trim().toLowerCase();
     const role      = document.getElementById('pgr-role-input').value;
     const year      = parseInt(document.getElementById('pgr-year-input').value) || null;
-    const minDuties = parseInt(document.getElementById('pgr-min-duties-input').value) ?? null;
+    const minDuties  = parseInt(document.getElementById('pgr-min-duties-input').value) ?? null;
+    const ntRaw      = document.getElementById('pgr-night-target-input')?.value;
+    const nightTarget = ntRaw !== '' && ntRaw != null && !isNaN(parseInt(ntRaw)) ? parseInt(ntRaw) : null;
     const editId    = document.getElementById('pgr-edit-id').value;
 
     if (!name) { alert('Name required.'); return; }
@@ -246,7 +257,7 @@ const Admin = (() => {
     }
 
     const existing = DB.getPGR(editId);
-    const pgr = { ...existing, name, email: email || existing.email || '', role, year, minDuties };
+    const pgr = { ...existing, name, email: email || existing.email || '', role, year, minDuties, nightTarget };
     await DB.upsertPGR(pgr);
     closePGRModal();
     renderPGRList();
@@ -302,7 +313,7 @@ const Admin = (() => {
     document.getElementById('max-bays-input').value    = cfg.maxBaysPerPGR;
     document.getElementById('min-duties-input').value  = cfg.minDutiesPerMonth;
     document.getElementById('num-years-input').value   = cfg.numYears || 4;
-    // Build per-year duty inputs dynamically
+    // Per-year min duties
     const yd  = cfg.yearMinDuties || {};
     const box = document.getElementById('year-duties-container');
     if (box) {
@@ -310,6 +321,16 @@ const Admin = (() => {
         `<label style="margin:0">Y${y}</label>` +
         `<input type="number" id="year-duties-${y}" min="0" max="31" value="${yd[y] ?? cfg.minDutiesPerMonth}" ` +
         `style="width:64px" onchange="Admin.saveYearDuties()" />`
+      ).join('');
+    }
+    // Per-year night duties
+    const nyd  = cfg.yearNightDuties || {};
+    const nbox = document.getElementById('year-night-duties-container');
+    if (nbox) {
+      nbox.innerHTML = years.map(y =>
+        `<label style="margin:0">Y${y}</label>` +
+        `<input type="number" id="year-night-${y}" min="0" max="${yd[y] ?? cfg.minDutiesPerMonth}" ` +
+        `value="${nyd[y] ?? 0}" style="width:64px" onchange="Admin.saveYearNightDuties()" />`
       ).join('');
     }
   }
@@ -357,7 +378,229 @@ const Admin = (() => {
     await DB.saveConfig(cfg);
   }
 
-  // ── Replacement log ────────────────────────────────────
+  async function saveYearNightDuties() {
+    const cfg   = DB.getConfig();
+    const years = DB.getYears();
+    cfg.yearNightDuties = cfg.yearNightDuties || {};
+    years.forEach(y => {
+      const el = document.getElementById(`year-night-${y}`);
+      if (el) cfg.yearNightDuties[y] = parseInt(el.value) || 0;
+    });
+    await DB.saveConfig(cfg);
+  }
+
+  // ── SR-managed PGR Preferences Tab ─────────────────────
+  function renderSRPrefsTab() {
+    const el = document.getElementById('admin-tab-prefs');
+    if (!el) return;
+    const pgrs    = DB.getPGRs().filter(p => ['pgr','senior_pgr','senior_registrar'].includes(p.role));
+    const ym      = RosterEngine.currentYM();
+    const pgrOpts = pgrs.map(p =>
+      `<option value="${p.id}"${_srPrefPGR === p.id ? ' selected' : ''}>${p.name}</option>`
+    ).join('');
+
+    // Re-sync srPrefSel from DB whenever we (re-)render the tab
+    if (_srPrefPGR) {
+      const pref = DB.getPrefForPGR(_srPrefPGR);
+      _srPrefSel = new Set((pref.srOffDays || []).filter(d => d.startsWith(ym)));
+    }
+
+    el.innerHTML = `
+      <div class="admin-section">
+        <h3>Set PGR Off-Day Preferences</h3>
+        <p class="muted" style="font-size:.82rem">
+          These act as a fallback — if a PGR has not set their own preferences for the month,
+          yours apply. The PGR’s own choices always take priority day-by-day.
+        </p>
+        <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem">
+          <label style="margin:0;white-space:nowrap">Select PGR</label>
+          <select id="sr-pref-pgr-sel" onchange="Admin.selectSRPrefPGR(this.value)">
+            <option value="">— choose a PGR —</option>
+            ${pgrOpts}
+          </select>
+          ${_srPrefPGR
+            ? `<button class="btn btn-primary btn-sm" onclick="Admin.saveSRPrefs()">Save Preferences</button>`
+            : ''}
+        </div>
+        <div id="sr-pref-calendar">${_srPrefPGR ? _buildSRPrefCalendar(ym) : ''}</div>
+        ${_srPrefPGR ? `<div class="bay-settings-container">${_buildBayPrioritySection()}</div>` : ''}
+      </div>`;
+  }
+
+  function _buildSRPrefCalendar(ym) {
+    const [year, month] = ym.split('-').map(Number);
+    const daysInMonth   = new Date(year, month, 0).getDate();
+    const DAY_NAMES     = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const today         = new Date().toISOString().slice(0, 10);
+    const pgrPref       = DB.getPrefForPGR(_srPrefPGR);
+    const pgrOwn        = new Set((pgrPref.offDays || []).filter(d => d.startsWith(ym)));
+
+    let html = `<div class="roster-matrix-wrap"><table class="roster-matrix" style="max-width:520px">
+      <thead><tr>
+        <th class="rm-hdr rm-date-hdr">Date</th>
+        <th class="rm-hdr rm-day-hdr">Day</th>
+        <th class="rm-hdr" style="text-align:left;padding-left:.75rem">SR Preference</th>
+        <th class="rm-hdr" style="text-align:left;padding-left:.75rem">PGR’s Own</th>
+      </tr></thead><tbody>`;
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date   = `${ym}-${String(d).padStart(2,'0')}`;
+      const dow    = new Date(year, month - 1, d).getDay();
+      const isWknd = dow === 0 || dow === 6;
+      const isTdy  = date === today;
+      const isSel  = _srPrefSel.has(date);
+      const ownOff = pgrOwn.has(date);
+      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}">
+        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}"><span class="rm-date-num">${d}</span></td>
+        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}">${DAY_NAMES[dow]}</td>
+        <td class="rm-cell" onclick="Admin.toggleSRPrefDay('${date}')" style="cursor:pointer;padding:.3rem .6rem">
+          ${isSel
+            ? `<div class="rm-name rm-name-morning">Off (SR)</div>`
+            : `<span class="rm-unassigned" style="font-size:.74rem">click to mark</span>`}
+        </td>
+        <td class="rm-cell" style="padding:.3rem .6rem">
+          ${ownOff
+            ? `<div class="rm-name rm-name-morning" style="opacity:.55">Off (PGR)</div>`
+            : `<span class="rm-unassigned">—</span>`}
+        </td>
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+    return html;
+  }
+
+  function selectSRPrefPGR(id) {
+    _srPrefPGR = id || null;
+    if (_srPrefPGR) {
+      const ym    = RosterEngine.currentYM();
+      const pref  = DB.getPrefForPGR(_srPrefPGR);
+      _srPrefSel  = new Set((pref.srOffDays || []).filter(d => d.startsWith(ym)));
+      _srExcluded = new Set(pref.excludedBays || []);
+      // Bay order = saved priorities for non-excluded bays, then any missing
+      const allUnitIds = DB.getUnits().map(u => u.id);
+      const saved      = (pref.bayPriorities || []).filter(uid => !_srExcluded.has(uid));
+      _srBayOrder = [
+        ...saved.filter(uid => allUnitIds.includes(uid)),
+        ...allUnitIds.filter(uid => !saved.includes(uid) && !_srExcluded.has(uid)),
+      ];
+    } else {
+      _srBayOrder = [];
+      _srExcluded = new Set();
+    }
+    renderSRPrefsTab();
+  }
+
+  function toggleSRPrefDay(date) {
+    if (_srPrefSel.has(date)) _srPrefSel.delete(date);
+    else _srPrefSel.add(date);
+    const calEl = document.getElementById('sr-pref-calendar');
+    if (calEl) calEl.innerHTML = _buildSRPrefCalendar(date.slice(0, 7));
+  }
+
+  async function saveSRPrefs() {
+    if (!_srPrefPGR) return;
+    const ym          = RosterEngine.currentYM();
+    const pref        = DB.getPrefForPGR(_srPrefPGR);
+    const otherMonths = (pref.srOffDays || []).filter(d => !d.startsWith(ym));
+    await DB.saveSRPrefsForPGR(_srPrefPGR, [...otherMonths, ..._srPrefSel]);
+    const btn = document.querySelector('#admin-tab-prefs .btn-primary');
+    if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save Preferences'; }, 1500); }
+  }
+
+  function _buildBayPrioritySection() {
+    const units = DB.getUnits();
+    if (!units.length) return '';
+
+    // ─ Excluded bays checkboxes
+    let html = `
+      <div style="margin-top:1.5rem">
+        <h4 style="margin:0 0 .2rem">Bay Restrictions</h4>
+        <p class="muted" style="font-size:.78rem;margin:0 0 .65rem">
+          Tick bays this PGR <strong>cannot</strong> be assigned to.
+          Auto-generate will skip them; manual assignment will show an error.
+        </p>
+        <div class="bay-exclude-list">`;
+    units.forEach(u => {
+      const checked = _srExcluded.has(u.id) ? 'checked' : '';
+      html += `<label class="bay-exclude-row">
+        <input type="checkbox" ${checked} onchange="Admin.toggleSRExcludedBay('${u.id}')" />
+        <span>${u.name}</span>
+        ${_srExcluded.has(u.id) ? '<span class="badge badge-err" style="margin-left:.5rem;font-size:.68rem">Excluded</span>' : ''}
+      </label>`;
+    });
+    html += `</div>`;
+
+    // ─ Priority order (only for non-excluded bays)
+    if (_srBayOrder.length) {
+      html += `
+        <h4 style="margin:1.1rem 0 .2rem">Assignment Priority</h4>
+        <p class="muted" style="font-size:.78rem;margin:0 0 .65rem">
+          Rank allowed bays most-to-least preferred. Auto-generate uses this order.
+        </p>
+        <div class="bay-priority-list">`;
+      _srBayOrder.forEach((uid, idx) => {
+        const unit = units.find(u => u.id === uid);
+        if (!unit) return;
+        html += `<div class="bay-prio-row">
+          <span class="bay-prio-num">${idx + 1}</span>
+          <span class="bay-prio-name">${unit.name}</span>
+          <div class="bay-prio-btns">
+            ${idx > 0
+              ? `<button class="btn btn-xs btn-ghost" onclick="Admin.moveSRBay('${uid}',-1)">↑</button>`
+              : `<span style="display:inline-block;width:30px"></span>`}
+            ${idx < _srBayOrder.length - 1
+              ? `<button class="btn btn-xs btn-ghost" onclick="Admin.moveSRBay('${uid}',1)">↓</button>`
+              : `<span style="display:inline-block;width:30px"></span>`}
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    html += `
+        <button class="btn btn-secondary btn-sm" style="margin-top:.9rem"
+          onclick="Admin.saveSRBaySettings()">Save Bay Settings</button>
+      </div>`;
+    return html;
+  }
+
+  function toggleSRExcludedBay(unitId) {
+    if (_srExcluded.has(unitId)) {
+      _srExcluded.delete(unitId);
+      // Re-add to bottom of priority order
+      if (!_srBayOrder.includes(unitId)) _srBayOrder.push(unitId);
+    } else {
+      _srExcluded.add(unitId);
+      _srBayOrder = _srBayOrder.filter(id => id !== unitId);
+    }
+    // Re-render the bay section only (don't reset the calendar scroll)
+    const el = document.getElementById('admin-tab-prefs');
+    if (el) {
+      const bayDiv = el.querySelector('.bay-settings-container');
+      if (bayDiv) bayDiv.outerHTML = `<div class="bay-settings-container">${_buildBayPrioritySection()}</div>`;
+      else renderSRPrefsTab();
+    }
+  }
+
+  function moveSRBay(id, dir) {
+    const idx = _srBayOrder.indexOf(id);
+    if (idx === -1) return;
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= _srBayOrder.length) return;
+    [_srBayOrder[idx], _srBayOrder[newIdx]] = [_srBayOrder[newIdx], _srBayOrder[idx]];
+    // Re-render just the bay section by rebuilding the prefs tab
+    renderSRPrefsTab();
+  }
+
+  async function saveSRBaySettings() {
+    if (!_srPrefPGR) return;
+    await DB.saveBayPrioritiesForPGR(_srPrefPGR, [..._srBayOrder]);
+    await DB.saveExcludedBaysForPGR(_srPrefPGR, [..._srExcluded]);
+    const btn = document.querySelector('#admin-tab-prefs .btn-secondary');
+    if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save Bay Settings'; }, 1500); }
+  }
+
+  // ── Replacement log ────────────────────────────
   function renderReplacementLog() {
     const roster = DB.getRoster().filter(r => r.replaced);
     const pgrs   = DB.getPGRs();
@@ -463,7 +706,9 @@ const Admin = (() => {
     _onInviteRoleChange,
     openEditPGR, closePGRModal, savePGR, deletePGR, transferAdmin,
     renderUnitList, addUnit, deleteUnit,
-    saveShiftMode, saveMaxBays, saveMinDuties, saveNumYears, saveYearDuties,
+    saveShiftMode, saveMaxBays, saveMinDuties, saveNumYears, saveYearDuties, saveYearNightDuties,
     renderReplacementLog, addAdminLeave,
+    renderSRPrefsTab, selectSRPrefPGR, toggleSRPrefDay, saveSRPrefs,
+    toggleSRExcludedBay, moveSRBay, saveSRBaySettings,
   };
 })();

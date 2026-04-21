@@ -36,9 +36,19 @@ const ValidationEngine = (() => {
       });
     }
 
-    // 2. Preferred off-day
+    // 1b. Excluded bay
     const pref = DB.getPrefForPGR(pgrId);
-    if (pref.offDays.includes(date)) {
+    if ((pref.excludedBays || []).includes(unitId)) {
+      issues.push({
+        severity: 'error',
+        code: 'BAY_EXCLUDED',
+        message: `${pgr.name} cannot be assigned to ${unitId} (bay exclusion set by admin).`,
+      });
+    }
+
+    // 2. Preferred off-day (own or SR-set fallback)
+    const effectiveOffDays = DB.getEffectiveOffDays(pgrId);
+    if (effectiveOffDays.includes(date)) {
       issues.push({
         severity: 'warn',
         code: 'PREF_VIOLATION',
@@ -97,17 +107,27 @@ const ValidationEngine = (() => {
 
     // --- Per-PGR duty count check ---
     for (const pgr of pgrs) {
-      const minDuties = pgr.minDuties || cfg.minDutiesPerMonth;
+      const minDuties = DB.getEffectiveMinDuties(pgr);
       const actual    = DB.countDutiesForPGR(pgr.id, ym);
       if (actual < minDuties) {
         DB.addAlert('warn',
           `${pgr.name} is UNDER-ASSIGNED: ${actual}/${minDuties} duties in ${ym}`);
-        // carry forward adjustment: they are owed (minDuties - actual) extra next month
         DB.setCarryFwdFor(pgr.id, ym, -(minDuties - actual));
       } else if (actual > minDuties) {
         DB.addAlert('warn',
           `${pgr.name} is OVER-ASSIGNED: ${actual}/${minDuties} duties in ${ym}`);
         DB.setCarryFwdFor(pgr.id, ym, actual - minDuties);
+      }
+
+      // Night duty target check
+      const nightTarget = DB.getEffectiveNightTarget(pgr);
+      if (nightTarget > 0) {
+        const nightActual = DB.getRosterForMonth(ym)
+          .filter(r => r.pgrId === pgr.id && r.shift === 'Night').length;
+        if (nightActual < nightTarget) {
+          DB.addAlert('warn',
+            `${pgr.name} has ${nightActual} night duties (target: ${nightTarget}) in ${ym}.`);
+        }
       }
 
       // Weekly overwork check
