@@ -385,6 +385,28 @@ const DB = (() => {
     await fs().collection('prefs').doc(pgrId).set(updated, { merge: true });
   }
 
+  // Save weekend duty quotas for a PGR.
+  // quotas = { satDay: n, satNight: n, sunDay: n, sunNight: n }
+  async function saveWeekendQuotasForPGR(pgrId, quotas) {
+    const existing = C.prefs.find(p => p.pgrId === pgrId) || { pgrId, offDays: [] };
+    const updated  = { ...existing, weekendQuotas: quotas };
+    C.prefs = C.prefs.filter(p => p.pgrId !== pgrId);
+    C.prefs.push(updated);
+    await fs().collection('prefs').doc(pgrId).set(updated, { merge: true });
+  }
+
+  // Returns the weekend quota for a PGR (defaults to 0 for each slot type).
+  function getWeekendQuotasForPGR(pgrId) {
+    const pref = getPrefForPGR(pgrId);
+    const q    = pref.weekendQuotas || {};
+    return {
+      satDay:   Number(q.satDay   ?? 0),
+      satNight: Number(q.satNight ?? 0),
+      sunDay:   Number(q.sunDay   ?? 0),
+      sunNight: Number(q.sunNight ?? 0),
+    };
+  }
+
   // ── ALERTS ─────────────────────────────────────────────
   // Sorted newest-first client-side (avoids requiring a Firestore index)
   function getAlerts()       { return [...C.alerts].sort((a, b) => b.date.localeCompare(a.date)); }
@@ -443,6 +465,7 @@ const DB = (() => {
     isOnLeave, applyLeave, addLeave, updateLeaveStatus, deleteLeave,
     // Prefs
     getAllPrefs, getPrefForPGR, savePrefForPGR, saveSRPrefsForPGR, saveBayPrioritiesForPGR, saveExcludedBaysForPGR,
+    saveWeekendQuotasForPGR, getWeekendQuotasForPGR,
     // Alerts
     getAlerts, addAlert, markAlertsSeen, clearAlerts, unseenAlertCount,
     // Carry forward

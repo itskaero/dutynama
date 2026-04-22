@@ -546,6 +546,41 @@ h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.3px; }
   display: block;
 }
 
+/* ── Pakistan holiday highlight ─────────────────────── */
+.rm-holiday .rm-date-cell,
+.rm-holiday .rm-dayname-cell {
+  background: rgba(196,160,0,.10) !important;
+  border-left: 2px solid rgba(250,204,21,.45);
+}
+.rm-holiday .rm-cell {
+  background: rgba(196,160,0,.04) !important;
+}
+.rm-holiday-date .rm-date-num {
+  color: #fbbf24;
+}
+/* Small crescent dot next to date number */
+.rm-holiday-dot {
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #fbbf24;
+  vertical-align: middle;
+  margin-left: 2px;
+  margin-bottom: 2px;
+  box-shadow: 0 0 4px rgba(251,191,36,.6);
+}
+/* Holiday name tag inside the day-name cell */
+.rm-holiday-tag {
+  display: block;
+  font-size: .6rem;
+  color: #fbbf24;
+  line-height: 1.1;
+  white-space: normal;
+  word-break: break-word;
+  margin-top: 1px;
+  opacity: .85;
+}
+
 /* ── Row states ─────────────────────────────────────── */
 .rm-row:hover .rm-date-cell,
 .rm-row:hover .rm-dayname-cell,
@@ -715,31 +750,119 @@ h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.3px; }
 }
 .roster-layout .roster-calendar { flex: 1; min-width: 0; }
 
-/* ── PGR summary side panel ────────────────────────────── */
-.roster-pgr-panel {
-  width: 210px;
+/* ── Side column: stacks both panels vertically ────────── */
+.roster-side-col {
+  width: 218px;
   flex-shrink: 0;
   position: sticky;
   top: 4.5rem;
   max-height: calc(100vh - 5rem);
   overflow-y: auto;
-  background: rgba(13,17,23,.85);
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+}
+
+/* ── Individual collapsible panel ───────────────────────── */
+.roster-side-panel {
+  background: rgba(13,17,23,.88);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--glass-border);
   border-radius: var(--r);
-  padding: .75rem .65rem;
-  box-shadow: 0 4px 24px rgba(0,0,0,.45);
+  overflow: hidden;
+  box-shadow: 0 3px 16px rgba(0,0,0,.38);
 }
-.pgr-panel-heading {
-  font-size: .65rem;
+
+/* Collapsible header */
+.sp-header {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .5rem .65rem;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--glass-border);
+  transition: background .12s;
+}
+.sp-header:hover { background: rgba(255,255,255,.04); }
+.roster-side-panel.sp-collapsed .sp-header { border-bottom-color: transparent; }
+.sp-title {
+  font-size: .63rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .5px;
   color: var(--text-muted);
-  margin-bottom: .65rem;
-  padding-bottom: .4rem;
-  border-bottom: 1px solid var(--glass-border);
+  flex: 1;
+}
+.sp-badge {
+  font-size: .6rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: .1em .42em;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.sp-badge-crit { background: rgba(239,68,68,.35);   color: #fca5a5; }
+.sp-badge-err  { background: rgba(239,68,68,.22);   color: #f87171; }
+.sp-badge-warn { background: rgba(245,158,11,.22);  color: #fbbf24; }
+.sp-badge-ok   { background: rgba(34,197,94,.18);   color: #4ade80; }
+.sp-chevron {
+  font-size: .7rem;
+  color: var(--text-muted);
+  transition: transform .2s;
+  line-height: 1;
+}
+.sp-chevron.sp-chevron-up { transform: rotate(180deg); }
+
+/* Panel body — hidden when parent has .sp-collapsed */
+.sp-body {
+  padding: .6rem .65rem .65rem;
+  overflow-y: auto;
+  max-height: calc(100vh - 14rem);
+}
+.roster-side-panel.sp-collapsed .sp-body { display: none; }
+
+/* ── Alert items (violations panel) ────────────────────── */
+.vp-empty  { font-size: .72rem; color: var(--text-muted); margin: .25rem 0; }
+.vp-ok     { color: #4ade80; }
+.vp-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  margin-bottom: .6rem;
+}
+.vp-summary-chip {
+  font-size: .6rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: .15em .55em;
+  line-height: 1.5;
+}
+.vp-chip-crit { background: rgba(239,68,68,.25);  color: #fca5a5; }
+.vp-chip-err  { background: rgba(239,68,68,.15);  color: #f87171; }
+.vp-chip-warn { background: rgba(245,158,11,.18); color: #fbbf24; }
+.vp-item {
+  display: flex;
+  align-items: flex-start;
+  gap: .3rem;
+  padding: .3rem .28rem;
+  border-radius: 5px;
+  margin-bottom: .22rem;
+}
+.vp-item-crit { background: rgba(239,68,68,.14); border-left: 2px solid rgba(239,68,68,.6); }
+.vp-item-err  { background: rgba(239,68,68,.07); border-left: 2px solid rgba(239,68,68,.3); }
+.vp-item-warn { background: rgba(245,158,11,.06); border-left: 2px solid rgba(245,158,11,.35); }
+.vp-item-icon { font-size: .82rem; flex-shrink: 0; line-height: 1.35; }
+.vp-item-body { display: flex; flex-direction: column; gap: .06rem; min-width: 0; }
+.vp-item-name     { font-size: .69rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vp-item-headline { font-size: .64rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vp-item-detail   { font-size: .6rem;  color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pgr-panel-hint {
+  font-size: .63rem;
+  color: var(--text-muted);
+  margin-bottom: .55rem;
+  display: block;
 }
 .pgr-panel-row {
   padding: .45rem .3rem;
@@ -1024,7 +1147,11 @@ h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.3px; }
 
 @media (max-width: 900px) {
   .roster-layout { flex-direction: column; }
+  .roster-side-col { width: 100%; position: static; max-height: none; flex-direction: row; flex-wrap: wrap; }
+  .roster-side-panel { flex: 1 1 calc(50% - .3rem); min-width: 260px; }
+  .sp-body { max-height: none; }
   .roster-pgr-panel { width: 100%; position: static; max-height: none; flex-direction: row; flex-wrap: wrap; }
+  .roster-violations-panel { width: 100%; position: static; max-height: none; }
   .pgr-panel-row { display: inline-flex; flex-direction: column; width: calc(50% - .5rem); border-bottom: none; border-right: 1px solid rgba(255,255,255,.04); }
 }
 
@@ -1392,4 +1519,26 @@ h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.3px; }
 @media (max-width: 480px) {
   .cards-row { grid-template-columns: repeat(2, 1fr); }
   .topbar-center { display: none; }
+}
+
+/* ── Weekend quota section (admin SR prefs tab) ──────────────── */
+.wknd-quota-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .55rem .85rem;
+  margin: .6rem 0;
+}
+.wknd-quota-row {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+.wknd-quota-label {
+  font-size: .72rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.wknd-quota-input {
+  width: 100%;
+  max-width: 80px;
 }

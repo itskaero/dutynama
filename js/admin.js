@@ -424,6 +424,7 @@ const Admin = (() => {
         </div>
         <div id="sr-pref-calendar">${_srPrefPGR ? _buildSRPrefCalendar(ym) : ''}</div>
         ${_srPrefPGR ? `<div class="bay-settings-container">${_buildBayPrioritySection()}</div>` : ''}
+        ${_srPrefPGR ? `<div class="wknd-quota-container">${_buildWeekendQuotaSection()}</div>` : ''}
       </div>`;
   }
 
@@ -600,6 +601,62 @@ const Admin = (() => {
     if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save Bay Settings'; }, 1500); }
   }
 
+  // ── Weekend duty quotas section ────────────────────────
+  function _buildWeekendQuotaSection() {
+    const q = DB.getWeekendQuotasForPGR(_srPrefPGR);
+    const shifts = DB.getShifts();
+
+    // Determine which shift IDs map to "day-type" and "night-type"
+    // Any shift with id/label containing 'night' or hours>=10 = night; everything else = day
+    const dayShifts   = shifts.filter(s =>
+      !s.id.toLowerCase().includes('night') && (s.hours || 0) < 10
+    );
+    const nightShifts = shifts.filter(s =>
+      s.id.toLowerCase().includes('night') || (s.hours || 0) >= 10
+    );
+
+    const inp = (id, val, label) =>
+      `<div class="wknd-quota-row">
+        <label class="wknd-quota-label">${label}</label>
+        <input type="number" id="wknd-${id}" class="input wknd-quota-input"
+          min="0" max="6" value="${val}"
+          title="How many ${label} duties per month">
+      </div>`;
+
+    return `
+      <div style="margin-top:1.5rem">
+        <h4 style="margin:0 0 .2rem">Weekend &amp; Holiday Duty Quotas</h4>
+        <p class="muted" style="font-size:.78rem;margin:0 0 .85rem">
+          Set how many weekend/holiday duties (Saturday, Sunday, PK holidays)
+          should be allocated to this PGR per month.<br>
+          Auto-generate will fill weekend slots in the first pass to meet these quotas
+          before distributing remaining duties. Set to <strong>0</strong> to impose no limit.
+        </p>
+        <div class="wknd-quota-grid">
+          ${inp('satDay',   q.satDay,   'Saturday — Day shifts')}
+          ${inp('satNight', q.satNight, 'Saturday — Night shifts')}
+          ${inp('sunDay',   q.sunDay,   'Sunday — Day shifts')}
+          ${inp('sunNight', q.sunNight, 'Sunday — Night shifts')}
+        </div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:.75rem"
+          onclick="Admin.saveWeekendQuotas()">Save Weekend Quotas</button>
+      </div>`;
+  }
+
+  async function saveWeekendQuotas() {
+    if (!_srPrefPGR) return;
+    const get = id => Math.max(0, parseInt(document.getElementById(`wknd-${id}`)?.value || '0', 10) || 0);
+    const quotas = {
+      satDay:   get('satDay'),
+      satNight: get('satNight'),
+      sunDay:   get('sunDay'),
+      sunNight: get('sunNight'),
+    };
+    await DB.saveWeekendQuotasForPGR(_srPrefPGR, quotas);
+    const btn = document.querySelector('.wknd-quota-container .btn-secondary');
+    if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save Weekend Quotas'; }, 1500); }
+  }
+
   // ── Replacement log ────────────────────────────
   function renderReplacementLog() {
     const roster = DB.getRoster().filter(r => r.replaced);
@@ -710,5 +767,6 @@ const Admin = (() => {
     renderReplacementLog, addAdminLeave,
     renderSRPrefsTab, selectSRPrefPGR, toggleSRPrefDay, saveSRPrefs,
     toggleSRExcludedBay, moveSRBay, saveSRBaySettings,
+    saveWeekendQuotas,
   };
 })();
