@@ -26,7 +26,7 @@ const Admin = (() => {
       renderPGRList();
       renderPendingInvites();
       renderUnitList();
-      renderShiftSettings();
+      try { renderShiftSettings(); } catch (e) { console.error('[Admin] renderShiftSettings failed:', e); }
       renderReplacementLog();
       renderSRPrefsTab();
       switchTab('team');
@@ -309,10 +309,14 @@ const Admin = (() => {
   function renderShiftSettings() {
     const cfg   = DB.getConfig();
     const years = DB.getYears();
-    document.getElementById('shift-mode-select').value = cfg.shiftMode;
-    document.getElementById('max-bays-input').value    = cfg.maxBaysPerPGR;
-    document.getElementById('min-duties-input').value  = cfg.minDutiesPerMonth;
-    document.getElementById('num-years-input').value   = cfg.numYears || 4;
+    const sm = document.getElementById('shift-mode-select');
+    if (sm) sm.value = cfg.shiftMode;
+    const mb = document.getElementById('max-bays-input');
+    if (mb) mb.value = cfg.maxBaysPerPGR;
+    const md = document.getElementById('min-duties-input');
+    if (md) md.value = cfg.minDutiesPerMonth;
+    const ny = document.getElementById('num-years-input');
+    if (ny) ny.value = cfg.numYears || 4;
     // Per-year min duties
     const yd  = cfg.yearMinDuties || {};
     const box = document.getElementById('year-duties-container');
@@ -333,6 +337,7 @@ const Admin = (() => {
         `value="${nyd[y] ?? 0}" style="width:64px" onchange="Admin.saveYearNightDuties()" />`
       ).join('');
     }
+    try { renderGlobalWeekendSection(); } catch (e) { console.error('[Admin] renderGlobalWeekendSection failed:', e); }
   }
 
   async function saveNumYears() {
@@ -387,6 +392,63 @@ const Admin = (() => {
       if (el) cfg.yearNightDuties[y] = parseInt(el.value) || 0;
     });
     await DB.saveConfig(cfg);
+    renderShiftSettings(); // rebuild night-per-year caps
+  }
+
+  // ── Global weekend quotas (Settings tab) — per training year ──────────
+  function renderGlobalWeekendSection() {
+    const el = document.getElementById('global-weekend-quota-section');
+    if (!el) return;
+    const years  = DB.getYears();
+    const yqMap  = DB.getYearWeekendQuotas();
+    const shifts = DB.getShifts();
+    const nightIds = new Set(shifts.filter(s =>
+      s.id === 'Night' || s.label.toLowerCase().includes('night') || (s.hours || 0) >= 10
+    ).map(s => s.id));
+    const dayLbl   = shifts.filter(s => !nightIds.has(s.id)).map(s => s.label).join('/') || 'Day';
+    const nightLbl = shifts.filter(s =>  nightIds.has(s.id)).map(s => s.label).join('/') || 'Night';
+
+    const headerRow = `
+      <div class="year-wknd-grid" style="margin-bottom:.2rem">
+        <span class="wknd-quota-label" style="font-weight:600">Year</span>
+        <span class="wknd-quota-label" style="font-weight:600">Sat — ${dayLbl}</span>
+        <span class="wknd-quota-label" style="font-weight:600">Sat — ${nightLbl}</span>
+        <span class="wknd-quota-label" style="font-weight:600">Sun — ${dayLbl}</span>
+        <span class="wknd-quota-label" style="font-weight:600">Sun — ${nightLbl}</span>
+      </div>`;
+
+    const dataRows = years.map(y => {
+      const q = yqMap[y] || { satDay: 0, satNight: 0, sunDay: 0, sunNight: 0 };
+      return `
+        <div class="year-wknd-grid" style="margin-bottom:.35rem">
+          <span class="wknd-quota-label">Y${y}</span>
+          <input type="number" id="ywq-${y}-satDay"   class="input wknd-quota-input" min="0" max="8" value="${q.satDay}" />
+          <input type="number" id="ywq-${y}-satNight" class="input wknd-quota-input" min="0" max="8" value="${q.satNight}" />
+          <input type="number" id="ywq-${y}-sunDay"   class="input wknd-quota-input" min="0" max="8" value="${q.sunDay}" />
+          <input type="number" id="ywq-${y}-sunNight" class="input wknd-quota-input" min="0" max="8" value="${q.sunNight}" />
+        </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="margin:.5rem 0 .75rem">${headerRow}${dataRows}</div>
+      <button class="btn btn-secondary btn-sm" onclick="Admin.saveGlobalWeekendQuotas()">Save Year Quotas</button>`;
+  }
+
+  async function saveGlobalWeekendQuotas() {
+    const years = DB.getYears();
+    const get   = (y, slot) => Math.max(0, parseInt(document.getElementById(`ywq-${y}-${slot}`)?.value || '0', 10) || 0);
+    const map   = {};
+    years.forEach(y => {
+      map[y] = {
+        satDay:   get(y, 'satDay'),
+        satNight: get(y, 'satNight'),
+        sunDay:   get(y, 'sunDay'),
+        sunNight: get(y, 'sunNight'),
+      };
+    });
+    await DB.saveYearWeekendQuotas(map);
+    const btn = document.querySelector('#global-weekend-quota-section .btn-secondary');
+    if (btn) { btn.textContent = 'Saved \u2713'; setTimeout(() => { btn.textContent = 'Save Year Quotas'; }, 1500); }
   }
 
   // ── SR-managed PGR Preferences Tab ─────────────────────
@@ -402,9 +464,15 @@ const Admin = (() => {
     // Re-sync srPrefSel from DB whenever we (re-)render the tab
     if (_srPrefPGR) {
       const pref = DB.getPrefForPGR(_srPrefPGR);
-      _srPrefSel = new Set((pref.srOffDays || []).filter(d => d.startsWith(ym)));
+      _srPrefSel = new Set((pref.srOffDays || []).filter(d => d?.startsWith(ym)));
     }
-
+    // Build each sub-section individually so a crash in one doesn't blank the whole tab
+    let calHtml = '', bayHtml = '', quotaHtml = '';
+    if (_srPrefPGR) {
+      try { calHtml   = _buildSRPrefCalendar(ym);    } catch (e) { console.error('[Admin] _buildSRPrefCalendar failed:', e); calHtml = `<p style="color:var(--err);font-size:.8rem">Error: ${e.message}</p>`; }
+      try { bayHtml   = _buildBayPrioritySection();  } catch (e) { console.error('[Admin] _buildBayPrioritySection failed:', e); }
+      try { quotaHtml = _buildWeekendQuotaSection(); } catch (e) { console.error('[Admin] _buildWeekendQuotaSection failed:', e); }
+    }
     el.innerHTML = `
       <div class="admin-section">
         <h3>Set PGR Off-Day Preferences</h3>
@@ -422,9 +490,9 @@ const Admin = (() => {
             ? `<button class="btn btn-primary btn-sm" onclick="Admin.saveSRPrefs()">Save Preferences</button>`
             : ''}
         </div>
-        <div id="sr-pref-calendar">${_srPrefPGR ? _buildSRPrefCalendar(ym) : ''}</div>
-        ${_srPrefPGR ? `<div class="bay-settings-container">${_buildBayPrioritySection()}</div>` : ''}
-        ${_srPrefPGR ? `<div class="wknd-quota-container">${_buildWeekendQuotaSection()}</div>` : ''}
+        <div id="sr-pref-calendar">${calHtml}</div>
+        ${_srPrefPGR ? `<div class="bay-settings-container">${bayHtml}</div>` : ''}
+        ${_srPrefPGR ? `<div class="wknd-quota-container">${quotaHtml}</div>` : ''}
       </div>`;
   }
 
@@ -434,7 +502,7 @@ const Admin = (() => {
     const DAY_NAMES     = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     const today         = new Date().toISOString().slice(0, 10);
     const pgrPref       = DB.getPrefForPGR(_srPrefPGR);
-    const pgrOwn        = new Set((pgrPref.offDays || []).filter(d => d.startsWith(ym)));
+    const pgrOwn        = new Set((pgrPref.offDays || []).filter(d => d?.startsWith(ym)));
 
     let html = `<div class="roster-matrix-wrap"><table class="roster-matrix" style="max-width:520px">
       <thead><tr>
@@ -451,9 +519,10 @@ const Admin = (() => {
       const isTdy  = date === today;
       const isSel  = _srPrefSel.has(date);
       const ownOff = pgrOwn.has(date);
-      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}">
-        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}"><span class="rm-date-num">${d}</span></td>
-        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}">${DAY_NAMES[dow]}</td>
+      const holidayName = RosterEngine.getHolidayName(date);
+      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}${holidayName ? ' rm-holiday' : ''}">
+        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}${holidayName ? ' rm-holiday-date' : ''}"><span class="rm-date-num">${d}</span>${holidayName ? '<span class="rm-holiday-dot"></span>' : ''}</td>
+        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}" title="${holidayName || ''}">${DAY_NAMES[dow]}${holidayName ? `<span class="rm-holiday-tag">${holidayName}</span>` : ''}</td>
         <td class="rm-cell" onclick="Admin.toggleSRPrefDay('${date}')" style="cursor:pointer;padding:.3rem .6rem">
           ${isSel
             ? `<div class="rm-name rm-name-morning">Off (SR)</div>`
@@ -475,7 +544,7 @@ const Admin = (() => {
     if (_srPrefPGR) {
       const ym    = RosterEngine.currentYM();
       const pref  = DB.getPrefForPGR(_srPrefPGR);
-      _srPrefSel  = new Set((pref.srOffDays || []).filter(d => d.startsWith(ym)));
+      _srPrefSel  = new Set((pref.srOffDays || []).filter(d => d?.startsWith(ym)));
       _srExcluded = new Set(pref.excludedBays || []);
       // Bay order = saved priorities for non-excluded bays, then any missing
       const allUnitIds = DB.getUnits().map(u => u.id);
@@ -502,7 +571,7 @@ const Admin = (() => {
     if (!_srPrefPGR) return;
     const ym          = RosterEngine.currentYM();
     const pref        = DB.getPrefForPGR(_srPrefPGR);
-    const otherMonths = (pref.srOffDays || []).filter(d => !d.startsWith(ym));
+    const otherMonths = (pref.srOffDays || []).filter(d => d && !d.startsWith(ym));
     await DB.saveSRPrefsForPGR(_srPrefPGR, [...otherMonths, ..._srPrefSel]);
     const btn = document.querySelector('#admin-tab-prefs .btn-primary');
     if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save Preferences'; }, 1500); }
@@ -601,45 +670,106 @@ const Admin = (() => {
     if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save Bay Settings'; }, 1500); }
   }
 
-  // ── Weekend duty quotas section ────────────────────────
+  // ── Weekend duty quotas section (per-PGR override) ─────
   function _buildWeekendQuotaSection() {
-    const q = DB.getWeekendQuotasForPGR(_srPrefPGR);
-    const shifts = DB.getShifts();
+    const pref      = DB.getPrefForPGR(_srPrefPGR);
+    const pgr       = DB.getPGR(_srPrefPGR);
+    const global    = DB.getGlobalWeekendQuotasForYear(pgr?.year);  // year-specific baseline
+    const hasOverride = pref.weekendQuotas != null;
+    const effectiveQ  = DB.getWeekendQuotasForPGR(_srPrefPGR); // per-PGR or global fallback
+    const shifts    = DB.getShifts();
+    const ym        = RosterEngine.currentYM();
+    const yr        = parseInt(ym.slice(0, 4));
+    const mo        = parseInt(ym.slice(5, 7));
 
-    // Determine which shift IDs map to "day-type" and "night-type"
-    // Any shift with id/label containing 'night' or hours>=10 = night; everything else = day
-    const dayShifts   = shifts.filter(s =>
-      !s.id.toLowerCase().includes('night') && (s.hours || 0) < 10
-    );
-    const nightShifts = shifts.filter(s =>
-      s.id.toLowerCase().includes('night') || (s.hours || 0) >= 10
-    );
+    // Shift label helpers
+    const nightIds = new Set(shifts.filter(s =>
+      s.id === 'Night' || s.label.toLowerCase().includes('night') || (s.hours || 0) >= 10
+    ).map(s => s.id));
+    const dayLabel   = shifts.filter(s => !nightIds.has(s.id)).map(s => s.label).join(' / ') || 'Day';
+    const nightLabel = shifts.filter(s =>  nightIds.has(s.id)).map(s => s.label).join(' / ') || 'Night';
 
-    const inp = (id, val, label) =>
-      `<div class="wknd-quota-row">
-        <label class="wknd-quota-label">${label}</label>
-        <input type="number" id="wknd-${id}" class="input wknd-quota-input"
-          min="0" max="6" value="${val}"
-          title="How many ${label} duties per month">
-      </div>`;
+    // Month availability
+    let satCount = 0, sunCount = 0;
+    const daysInM = new Date(yr, mo, 0).getDate();
+    for (let d = 1; d <= daysInM; d++) {
+      const dow = new Date(yr, mo - 1, d).getDay();
+      if (dow === 6) satCount++;
+      if (dow === 0) sunCount++;
+    }
+
+    // Current month progress per bucket
+    const done = { satDay: 0, satNight: 0, sunDay: 0, sunNight: 0 };
+    DB.getRosterForMonth(ym).filter(r => r.pgrId === _srPrefPGR).forEach(r => {
+      const dow = new Date(yr, mo - 1, parseInt(r.date.slice(8))).getDay();
+      if (dow !== 6 && dow !== 0) return;
+      const isNt = nightIds.has(r.shift);
+      if (dow === 6) done[isNt ? 'satNight' : 'satDay']++;
+      else           done[isNt ? 'sunNight' : 'sunDay']++;
+    });
+
+    // Duty cap & validation
+    const dutyMax = Number(DB.getConfig().minDutiesPerMonth) || 10;
+    const qSum    = Object.values(effectiveQ).reduce((a, b) => a + b, 0);
+    const capWarn = qSum > dutyMax
+      ? `<p class="wknd-quota-cap-warn">⚠ Total weekend quota (${qSum}) exceeds monthly duty cap (${dutyMax}). Reduce to avoid conflicts.</p>`
+      : '';
+
+    // Override status badge + reset button
+    const statusBadge = hasOverride
+      ? `<span class="badge badge-warn" style="font-size:.68rem">Custom override</span>`
+      : `<span class="badge badge-ok"   style="font-size:.68rem">Using global defaults</span>`;
+    const resetBtn = hasOverride
+      ? `<button class="btn btn-xs btn-ghost" onclick="Admin.resetPGRWeekendToGlobal()"
+           title="Remove custom override and revert to global defaults">Reset to global</button>`
+      : '';
+
+    function inp(id, val, globalVal, current, available, label) {
+      const pct  = val > 0 ? Math.min(100, Math.round((current / val) * 100)) : 0;
+      const met  = val > 0 && current >= val;
+      const fill = val > 0 ? `style="width:${pct}%"` : 'style="width:0"';
+      const gNote = hasOverride
+        ? `<span style="font-size:.63rem;color:var(--text-muted);margin-left:.3rem">(global: ${globalVal})</span>` : '';
+      return `
+        <div class="wknd-quota-row wknd-quota-row-full">
+          <label class="wknd-quota-label">${label}${gNote}</label>
+          <input type="number" id="wknd-${id}" class="input wknd-quota-input"
+            min="0" max="${available * 2}" value="${val}">
+          <div class="wknd-quota-progress-bar">
+            <div class="wknd-quota-progress-fill${met ? ' met' : ''}" ${fill}></div>
+          </div>
+          <div class="wknd-quota-meta">
+            <span>${current} done this month</span>
+            <span>${available} ${available === 1 ? 'day' : 'days'} in month</span>
+          </div>
+        </div>`;
+    }
+
+    const monthLabel = new Date(yr, mo - 1, 1)
+      .toLocaleString('default', { month: 'long', year: 'numeric' });
 
     return `
       <div style="margin-top:1.5rem">
-        <h4 style="margin:0 0 .2rem">Weekend &amp; Holiday Duty Quotas</h4>
-        <p class="muted" style="font-size:.78rem;margin:0 0 .85rem">
-          Set how many weekend/holiday duties (Saturday, Sunday, PK holidays)
-          should be allocated to this PGR per month.<br>
-          Auto-generate will fill weekend slots in the first pass to meet these quotas
-          before distributing remaining duties. Set to <strong>0</strong> to impose no limit.
-        </p>
-        <div class="wknd-quota-grid">
-          ${inp('satDay',   q.satDay,   'Saturday — Day shifts')}
-          ${inp('satNight', q.satNight, 'Saturday — Night shifts')}
-          ${inp('sunDay',   q.sunDay,   'Sunday — Day shifts')}
-          ${inp('sunNight', q.sunNight, 'Sunday — Night shifts')}
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:.35rem;margin-bottom:.3rem">
+          <h4 style="margin:0">Weekend &amp; Holiday Duty Quotas</h4>
+          ${statusBadge}${resetBtn}
         </div>
+        <p class="wknd-quota-mandatory-note">📋 Mandatory minimums — auto-generate fills these first</p>
+        <p class="muted" style="font-size:.78rem;margin:0 0 .6rem">
+          How many weekend/holiday duties this PGR <strong>must</strong> receive per month.
+          ${hasOverride ? 'This PGR has a <strong>custom override</strong> that differs from the global default.' : 'Inheriting the <strong>global default</strong> — save below to create a per-PGR override.'}
+          These count toward the monthly duty cap (${dutyMax}).
+        </p>
+        <p class="muted" style="font-size:.74rem;margin:0 0 .85rem">Progress for <strong>${monthLabel}</strong></p>
+        <div class="wknd-quota-grid">
+          ${inp('satDay',   effectiveQ.satDay,   global.satDay,   done.satDay,   satCount, 'Saturday — ' + dayLabel)}
+          ${inp('satNight', effectiveQ.satNight, global.satNight, done.satNight, satCount, 'Saturday — ' + nightLabel)}
+          ${inp('sunDay',   effectiveQ.sunDay,   global.sunDay,   done.sunDay,   sunCount, 'Sunday — '   + dayLabel)}
+          ${inp('sunNight', effectiveQ.sunNight, global.sunNight, done.sunNight, sunCount, 'Sunday — '   + nightLabel)}
+        </div>
+        ${capWarn}
         <button class="btn btn-secondary btn-sm" style="margin-top:.75rem"
-          onclick="Admin.saveWeekendQuotas()">Save Weekend Quotas</button>
+          onclick="Admin.saveWeekendQuotas()">${hasOverride ? 'Save Override' : 'Save as Override'}</button>
       </div>`;
   }
 
@@ -653,8 +783,16 @@ const Admin = (() => {
       sunNight: get('sunNight'),
     };
     await DB.saveWeekendQuotasForPGR(_srPrefPGR, quotas);
-    const btn = document.querySelector('.wknd-quota-container .btn-secondary');
-    if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save Weekend Quotas'; }, 1500); }
+    // Re-render the quota section to reflect new override status
+    const container = document.querySelector('.wknd-quota-container');
+    if (container) container.outerHTML = `<div class="wknd-quota-container">${_buildWeekendQuotaSection()}</div>`;
+  }
+
+  async function resetPGRWeekendToGlobal() {
+    if (!_srPrefPGR) return;
+    await DB.clearWeekendQuotasForPGR(_srPrefPGR);
+    const container = document.querySelector('.wknd-quota-container');
+    if (container) container.outerHTML = `<div class="wknd-quota-container">${_buildWeekendQuotaSection()}</div>`;
   }
 
   // ── Replacement log ────────────────────────────
@@ -767,6 +905,7 @@ const Admin = (() => {
     renderReplacementLog, addAdminLeave,
     renderSRPrefsTab, selectSRPrefPGR, toggleSRPrefDay, saveSRPrefs,
     toggleSRExcludedBay, moveSRBay, saveSRBaySettings,
-    saveWeekendQuotas,
+    saveWeekendQuotas, resetPGRWeekendToGlobal,
+    renderGlobalWeekendSection, saveGlobalWeekendQuotas,
   };
 })();

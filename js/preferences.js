@@ -1,20 +1,30 @@
 /**
- * preferences.js — Preferred off-day selection (calendar picker)
+ * preferences.js — Preferred off-day selection (calendar picker) + weekend duty quotas
  */
 
 const Preferences = (() => {
 
-  let _selected = new Set();
-  let _dirty    = false;
+  let _selected    = new Set();
+  let _dirty       = false;
+  let _wkndQuota   = { satDay: 0, satNight: 0, sunDay: 0, sunNight: 0 };
 
   function render() {
     const user  = Auth.currentUser();
     const ym    = RosterEngine.currentYM();
     const pref  = DB.getPrefForPGR(user.id);
-    _selected   = new Set(pref.offDays.filter(d => d.startsWith(ym)));
+    _selected   = new Set((pref.offDays || []).filter(d => d?.startsWith(ym)));
     _dirty      = false;
-    _renderCalendar(ym);
-    _renderBayInfo(pref);
+    // Render calendar and bay info first so a quota crash can't blank the whole tab
+    try { _renderCalendar(ym);    } catch (e) { console.error('[Prefs] _renderCalendar failed:', e); }
+    try { _renderBayInfo(pref);   } catch (e) { console.error('[Prefs] _renderBayInfo failed:', e); }
+    // Load quota after calendar is visible; fall back to zeros on any error
+    try {
+      _wkndQuota = DB.getWeekendQuotasForPGR(user.id);
+    } catch (e) {
+      console.error('[Prefs] getWeekendQuotasForPGR failed:', e);
+      _wkndQuota = { satDay: 0, satNight: 0, sunDay: 0, sunNight: 0 };
+    }
+    try { _renderWeekendQuota(ym); } catch (e) { console.error('[Prefs] _renderWeekendQuota failed:', e); }
   }
 
   function _renderBayInfo(pref) {
@@ -77,7 +87,7 @@ const Preferences = (() => {
 
     // My leaves this month (for the Leave column)
     const myLeaves = DB.getLeavesForPGR(user.id)
-      .filter(l => l.date.startsWith(ym) && l.status !== 'rejected');
+      .filter(l => l.date?.startsWith(ym) && l.status !== 'rejected');
 
     const selectedCount = _selected.size;
     const saveDisabled  = _dirty ? '' : 'style="opacity:.45;pointer-events:none"';
@@ -115,11 +125,12 @@ const Preferences = (() => {
         ? `<div class="rm-name rm-name-evening">${lvStatus}</div>`
         : `<span class="rm-unassigned">—</span>`;
 
-      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}">
-        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}">
-          <span class="rm-date-num">${d}</span>
+      const holidayName = RosterEngine.getHolidayName(date);
+      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}${holidayName ? ' rm-holiday' : ''}">
+        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}${holidayName ? ' rm-holiday-date' : ''}">
+          <span class="rm-date-num">${d}</span>${holidayName ? '<span class="rm-holiday-dot"></span>' : ''}
         </td>
-        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}">${DAY_NAMES[dow]}</td>
+        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}" title="${holidayName || ''}">${DAY_NAMES[dow]}${holidayName ? `<span class="rm-holiday-tag">${holidayName}</span>` : ''}</td>
         <td class="rm-cell" onclick="Preferences.toggle('${date}')"
             style="cursor:pointer;padding:.3rem .6rem">
           ${isSel
@@ -146,7 +157,7 @@ const Preferences = (() => {
     const ym   = RosterEngine.currentYM();
     const pref = DB.getPrefForPGR(user.id);
 
-    const otherMonths = pref.offDays.filter(d => !d.startsWith(ym));
+    const otherMonths = (pref.offDays || []).filter(d => d && !d.startsWith(ym));
     DB.savePrefForPGR(user.id, [...otherMonths, ..._selected]);
 
     // Check if many PGRs share the same off-duty day — notify Senior PGR
@@ -172,5 +183,104 @@ const Preferences = (() => {
     _renderCalendar(ym);
   }
 
-  return { render, toggle, save };
-})();
+  // ── Weekend duty quota section (read-only for PGRs) ──────────────────
+  function _renderWeekendQuota(ym) {
+    const el = document.getElementById('pref-weekend-quota');
+    if (!el) return;
+
+    const shifts    = DB.getShifts();
+    const yr        = parseInt(ym.slice(0, 4));
+    const mo        = parseInt(ym.slice(5, 7));
+    const daysInM   = new Date(yr, mo, 0).getDate();
+    const roster    = DB.getRosterForMonth(ym);
+    const user      = Auth.currentUser();
+    const nightIds  = new Set(shifts.filter(s =>
+      s.id === 'Night' || s.label.toLowerCase().includes('night') || (s.hours || 0) >= 10
+    ).map(s => s.id));
+
+    // Count how many weekend slots this PGR already has this month
+    const done = { satDay: 0, satNight: 0, sunDay: 0, sunNight: 0 };
+    roster.filter(r => r.pgrId === user.id).forEach(r => {
+      const dow   = new Date(yr, mo - 1, parseInt(r.date.slice(8))).getDay();
+      const isSat = dow === 6;
+      const isSun = dow === 0;
+      if (!isSat && !isSun) return;
+      const isNt = nightIds.has(r.shift);
+      if (isSat) done[isNt ? 'satNight' : 'satDay']++;
+      else       done[isNt ? 'sunNight' : 'sunDay']++;
+    });
+
+    let satCount = 0, sunCount = 0;
+    for (let d = 1; d <= daysInM; d++) {
+      const dow = new Date(yr, mo - 1, d).getDay();
+      if (dow === 6) satCount++;
+      if (dow === 0) sunCount++;
+    }
+
+    const pref           = DB.getPrefForPGR(user.id);
+    const hasOverride    = pref.weekendQuotas != null;
+    const effectiveQ     = _wkndQuota; // already loaded in render() via getWeekendQuotasForPGR
+    const dayLabel       = shifts.filter(s => !nightIds.has(s.id)).map(s => s.label).join(' / ') || 'Day';
+    const nightLabel     = shifts.filter(s =>  nightIds.has(s.id)).map(s => s.label).join(' / ') || 'Night';
+    const monthLabel     = new Date(yr, mo - 1, 1)
+      .toLocaleString('default', { month: 'long', year: 'numeric' });
+
+    const totalTarget = Object.values(effectiveQ).reduce((a, b) => a + b, 0);
+    if (totalTarget === 0) {
+      el.innerHTML = `<div class="wq-section"><p class="muted" style="font-size:.8rem;margin:.5rem 0">
+        No weekend duty targets have been configured by your admin yet.</p></div>`;
+      return;
+    }
+
+    function row(label, quota, current, available) {
+      const pct  = quota > 0 ? Math.min(100, Math.round((current / quota) * 100)) : 0;
+      const met  = quota > 0 && current >= quota;
+      const fill = quota > 0 ? `style="width:${pct}%"` : 'style="width:0"';
+      const cls  = met ? 'wq-status-met' : quota > 0 ? 'wq-status-pending' : 'wq-status-none';
+      return `
+        <div class="wq-row">
+          <div class="wq-row-label">
+            <span class="wq-label-text">${label}</span>
+            <span class="wq-avail">${available} ${available === 1 ? 'day' : 'days'} this month</span>
+          </div>
+          <div class="wq-row-controls" style="opacity:.75;pointer-events:none">
+            <input type="number" class="input wq-input" value="${quota}" disabled>
+            <span class="wq-unit">/ month</span>
+          </div>
+          <span class="wq-status ${cls}">${current}/${quota} done</span>
+        </div>
+        <div class="wknd-quota-progress-bar" style="margin:.15rem 0 .3rem">
+          <div class="wknd-quota-progress-fill${met ? ' met' : ''}" ${fill}></div>
+        </div>`;
+    }
+
+    const sourceBadge = hasOverride
+      ? `<span class="badge badge-warn" style="font-size:.68rem">Custom targets set by admin</span>`
+      : `<span class="badge badge-ok"   style="font-size:.68rem">Team default targets</span>`;
+
+    el.innerHTML = `
+      <div class="wq-section">
+        <div class="wq-header">
+          <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
+            <h4 class="wq-title" style="margin:0">Weekend Duty Targets</h4>
+            ${sourceBadge}
+          </div>
+          <p class="wq-subtitle muted" style="margin-top:.3rem">
+            Your mandatory weekend duty minimums for ${monthLabel},
+            set by your admin. Auto-generation prioritises these slots for you first.
+          </p>
+        </div>
+        <div class="wq-grid">
+          <div class="wq-col-header">Saturday</div>
+          <div class="wq-col-header">Sunday</div>
+          ${effectiveQ.satDay   > 0 ? row(dayLabel,   effectiveQ.satDay,   done.satDay,   satCount) : ''}
+          ${effectiveQ.sunDay   > 0 ? row(dayLabel,   effectiveQ.sunDay,   done.sunDay,   sunCount) : ''}
+          ${effectiveQ.satNight > 0 ? row(nightLabel, effectiveQ.satNight, done.satNight, satCount) : ''}
+          ${effectiveQ.sunNight > 0 ? row(nightLabel, effectiveQ.sunNight, done.sunNight, sunCount) : ''}
+        </div>
+      </div>`;
+  }
+
+  function onWkndChange() {} // no-op: quotas managed by admin
+
+  return { render, toggle, save, onWkndChange };

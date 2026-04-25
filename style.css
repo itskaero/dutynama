@@ -742,6 +742,36 @@ h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.3px; }
 }
 .swap-status.hidden { display: none; }
 
+/* Inspect-assign status bar */
+.inspect-status {
+  margin: .4rem 0 .2rem;
+  padding: .45rem .85rem;
+  background: rgba(251,191,36,.10);
+  border: 1px solid rgba(251,191,36,.35);
+  border-radius: var(--r-sm);
+  color: #fbbf24;
+  font-size: .8rem;
+  font-weight: 600;
+  cursor: default;
+}
+.inspect-status.hidden { display: none; }
+
+/* Empty cells glow in inspect mode */
+#roster-calendar.rm-inspect-mode .rm-cell .rm-unassigned {
+  color: #fbbf24;
+  border: 1px dashed rgba(251,191,36,.5);
+  border-radius: 3px;
+  padding: .1rem .4rem;
+  font-size: .7rem;
+  cursor: crosshair;
+  opacity: .8;
+  transition: background .1s;
+}
+#roster-calendar.rm-inspect-mode .rm-cell:hover .rm-unassigned {
+  background: rgba(251,191,36,.15);
+  opacity: 1;
+}
+
 /* ── Roster page two-column layout ─────────────────────── */
 .roster-layout {
   display: flex;
@@ -1528,6 +1558,13 @@ h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.3px; }
   gap: .55rem .85rem;
   margin: .6rem 0;
 }
+/* Per-year weekend quota grid (Settings tab): Year | SatDay | SatNight | SunDay | SunNight */
+.year-wknd-grid {
+  display: grid;
+  grid-template-columns: 46px repeat(4, 1fr);
+  gap: .3rem .5rem;
+  align-items: center;
+}
 .wknd-quota-row {
   display: flex;
   flex-direction: column;
@@ -1541,4 +1578,122 @@ h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.3px; }
 .wknd-quota-input {
   width: 100%;
   max-width: 80px;
+}
+/* ── Weekend quota section improvement (admin — progress indicators) ── */
+.wknd-quota-mandatory-note {
+  font-size: .75rem;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: .35rem;
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+}
+.wknd-quota-row-full {
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+}
+.wknd-quota-progress-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: .2rem;
+}
+.wknd-quota-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width .3s;
+}
+.wknd-quota-progress-fill.met { background: var(--success); }
+.wknd-quota-meta {
+  font-size: .7rem;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+}
+.wknd-quota-cap-warn {
+  font-size: .73rem;
+  color: var(--err);
+  margin-top: .4rem;
+  font-weight: 500;
+}
+/* ── Weekend quota section (preferences page) ─────────────────── */
+.wq-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.2rem 1rem;
+  margin-top: 1.4rem;
+}
+.wq-header { margin-bottom: .5rem; }
+.wq-title {
+  margin: 0 0 .25rem;
+  font-size: .95rem;
+  font-weight: 600;
+}
+.wq-subtitle {
+  font-size: .78rem;
+  margin: 0 0 .5rem;
+}
+.wq-month-note {
+  font-size: .74rem;
+  color: var(--text-muted);
+  margin-bottom: .75rem;
+}
+.wq-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .5rem .9rem;
+}
+.wq-col-header {
+  font-size: .72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding-bottom: .2rem;
+  border-bottom: 1px solid var(--border);
+}
+.wq-row {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  padding: .45rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.wq-row:last-child { border-bottom: none; }
+.wq-row-label { display: flex; flex-direction: column; gap: .1rem; }
+.wq-label-text { font-size: .78rem; font-weight: 500; }
+.wq-avail { font-size: .68rem; color: var(--text-muted); }
+.wq-row-controls {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+}
+.wq-input {
+  width: 64px;
+  padding: .25rem .4rem;
+  font-size: .85rem;
+}
+.wq-unit { font-size: .72rem; color: var(--text-muted); }
+.wq-status {
+  font-size: .7rem;
+  font-weight: 500;
+}
+.wq-status-met   { color: var(--success); }
+.wq-status-pending { color: var(--warn); }
+.wq-status-none  { color: var(--text-muted); }
+.wq-footer {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  margin-top: .85rem;
+}
+.wq-save-status { font-size: .78rem; color: var(--text-muted); }
+.wq-save-status.wq-saved { color: var(--success); font-weight: 600; }
+@media (max-width: 520px) {
+  .wq-grid { grid-template-columns: 1fr; }
 }

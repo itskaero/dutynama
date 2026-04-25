@@ -241,7 +241,7 @@ const RosterEngine = (() => {
           }
 
           html += `<td class="rm-cell rm-cell-${cls}${isToday ? ' rm-today' : ''}"
-            onclick="RosterEngine.openDay('${date}')">${cellContent}</td>`;
+            onclick="RosterEngine.handleCellClick('${date}','${sh.id}','${u.id}')">${cellContent}</td>`;
         });
       });
 
@@ -264,6 +264,7 @@ const RosterEngine = (() => {
     _renderPGRPanel();
     _renderViolationsPanel();
     _highlightSelectedPGR();
+    _updateInspectBar();
   }
 
   // ── PGR summary side panel ────────────────────────────
@@ -767,6 +768,7 @@ const RosterEngine = (() => {
     _renderPGRPanel();
     _renderViolationsPanel();
     _highlightSelectedPGR();
+    _updateInspectBar();
   }
 
   // Highlight all chips in the roster table belonging to the selected PGR
@@ -774,6 +776,45 @@ const RosterEngine = (() => {
     document.querySelectorAll('.rm-name[data-pgrid]').forEach(el => {
       el.classList.toggle('rm-pgr-selected', el.dataset.pgrid === _selectedPGRId);
     });
+  }
+
+  // Show/hide the inspect-assign status bar and toggle rm-inspect-mode on the calendar
+  function _updateInspectBar() {
+    const bar = document.getElementById('inspect-status');
+    const cal = document.getElementById('roster-calendar');
+    const active = !!(_selectedPGRId && Auth.can('editRoster'));
+    if (bar) {
+      if (active) {
+        const pgr = DB.getPGR(_selectedPGRId);
+        bar.textContent = `\uD83D\uDC46 Inspecting ${pgr?.name || _selectedPGRId} \u2014 click any empty slot to assign, or click their name again to deselect.`;
+        bar.classList.remove('hidden');
+      } else {
+        bar.classList.add('hidden');
+      }
+    }
+    if (cal) cal.classList.toggle('rm-inspect-mode', active);
+  }
+
+  // Handle a cell click: assign inspected PGR to empty slot, otherwise open day modal
+  function handleCellClick(date, shiftId, unitId) {
+    if (_selectedPGRId && Auth.can('editRoster')) {
+      const taken = DB.getRoster().some(
+        r => r.date === date && r.shift === shiftId && r.unitId === unitId
+      );
+      if (!taken) {
+        const issues = ValidationEngine.checkAssignment(_selectedPGRId, date, shiftId, unitId);
+        if (issues.length) {
+          const msgs = issues.map(i => `[${i.severity.toUpperCase()}] ${i.message}`).join('\n');
+          if (!confirm(msgs + '\n\nProceed with assignment?')) return;
+          issues.forEach(i => DB.addAlert(i.severity, i.message));
+          UI.refreshAlerts();
+        }
+        DB.assignShift({ date, shift: shiftId, unitId, pgrId: _selectedPGRId });
+        render();
+        return;
+      }
+    }
+    openDay(date);
   }
 
   // ── Export as Word document (HTML table, .doc) ─────────────
@@ -1262,15 +1303,15 @@ const RosterEngine = (() => {
           if (nightNeeded > 0 && nightDone < nightNeeded) sc += 8;  // needs nights, not getting them
         }
 
-        // Weekend quota scoring — reward PGRs still below their weekend target,
-        // and penalise those already at/over their target for this slot type.
+        // Weekend quota scoring — MANDATORY minimums.
+        // Strongly prefer PGRs below their quota; strongly de-prefer those who've met it.
         const bkt = wkndBucket(date, shiftId);
         if (bkt) {
           const quota = pgrData[p.id].wkndQuota[bkt] || 0;
           const done  = wkndCount[p.id][bkt] || 0;
           if (quota > 0) {
-            if (done < quota)  sc -= 20; // strongly prefer: needs more weekend slots of this type
-            if (done >= quota) sc += 35; // de-prefer: already met weekend quota for this type
+            if (done < quota)  sc -= 40; // mandatory: strongly prefer
+            if (done >= quota) sc += 60; // mandatory: strongly avoid over-assigning
           }
         }
 
@@ -1292,11 +1333,45 @@ const RosterEngine = (() => {
         return sc;
       }
 
+      // ── Pass 0: mandatory weekend quota fill ─────────────────────────────────
+      //   Process weekend slots first; only assign PGRs who still need this bucket.
+      //   This ensures mandatory minimums are met before the regular distribution.
+      const assignments = [];
+      const filledKeys  = new Set(existingKeys);
+
+      const weekendSlots = allSlots.filter(s => wkndBucket(s.date, s.shiftId) !== null);
+      for (const slot of weekendSlots) {
+        const { date, shiftId, unitId, isNight } = slot;
+        const slotKey = `${date}|${shiftId}|${unitId}`;
+        if (filledKeys.has(slotKey)) continue;
+        const bkt0 = wkndBucket(date, shiftId);
+
+        // Pool: PGRs who (a) pass all hard constraints, (b) respect off-days,
+        // and (c) still have unmet quota for this weekend bucket.
+        const quotaPool = allPGRs.filter(p => {
+          if (!eligible(p, date, shiftId, unitId, 1)) return false;
+          if (pgrData[p.id].offDays.has(date)) return false;
+          const quota = pgrData[p.id].wkndQuota[bkt0] || 0;
+          return quota > 0 && wkndCount[p.id][bkt0] < quota;
+        });
+
+        if (!quotaPool.length) continue; // no quota-needy PGRs available; regular passes handle it
+
+        const chosen = weightedRandomPick(quotaPool, p => scoreCandidate(p, date, shiftId, unitId, isNight));
+        assignments.push({ date, shift: shiftId, unitId, pgrId: chosen.id });
+        filledKeys.add(slotKey);
+        dutyCounted[chosen.id].add(`${date}|${shiftId}`);
+        assignedDates[chosen.id].add(date);
+        if (!dateToShift[`${chosen.id}|${date}`]) dateToShift[`${chosen.id}|${date}`] = shiftId;
+        const bk0 = `${chosen.id}|${date}|${shiftId}`;
+        bayCount[bk0] = (bayCount[bk0] || 0) + 1;
+        if (isNight) nightCount[chosen.id]++;
+        wkndCount[chosen.id][bkt0]++;
+      }
+
       // ── Two-pass assignment ──────────────────────────────────────────────────
       //   Pass 1: max 1 bay per PGR per shift-day (broad distribution)
       //   Pass 2: fill remaining gaps up to maxBays (fallback double-bay)
-      const assignments = [];
-      const filledKeys  = new Set(existingKeys);
       const passes      = maxBays > 1 ? [1, maxBays] : [maxBays];
 
       for (const passMaxBays of passes) {
@@ -1306,10 +1381,21 @@ const RosterEngine = (() => {
           if (filledKeys.has(slotKey)) continue;
 
           // Pool A: strict — hard constraints + no off-day violation
+          // For weekend slots, prefer PGRs who still need this quota bucket.
           let pool = allPGRs.filter(p =>
             eligible(p, date, shiftId, unitId, passMaxBays) &&
             !pgrData[p.id].offDays.has(date)
           );
+
+          // Pool A+: for weekend slots, narrow further to quota-needy PGRs if possible
+          const bktR = wkndBucket(date, shiftId);
+          if (bktR && pool.length) {
+            const quotaNeedy = pool.filter(p => {
+              const quota = pgrData[p.id].wkndQuota[bktR] || 0;
+              return quota > 0 && wkndCount[p.id][bktR] < quota;
+            });
+            if (quotaNeedy.length) pool = quotaNeedy;
+          }
 
           // Pool B: relaxed — off-day violation allowed (all hard constraints still enforced)
           if (!pool.length) {
@@ -1348,12 +1434,12 @@ const RosterEngine = (() => {
         totalScore += dutyShortfall * 25;
         totalScore += nightShortfall * 15;
 
-        // Weekend quota shortfall penalty (mild — best-effort, not mandatory)
+        // Weekend quota shortfall penalty (mandatory — heavy weight)
         const wq = pgrData[p.id].wkndQuota;
         const wc = wkndCount[p.id];
         ['satDay','satNight','sunDay','sunNight'].forEach(bkt => {
           if ((wq[bkt] || 0) > 0) {
-            totalScore += Math.max(0, wq[bkt] - (wc[bkt] || 0)) * 8;
+            totalScore += Math.max(0, wq[bkt] - (wc[bkt] || 0)) * 40;
           }
         });
       });
@@ -1557,5 +1643,7 @@ const RosterEngine = (() => {
     autoGenerate, runAutoGenerate, exportCSV, exportWord,
     clearRoster, selectForSwap, cancelSwap,
     selectPGRPanel, refreshIfActive, toggleSidePanel,
+    handleCellClick,
+    getHolidayName: date => PK_HOLIDAYS[date] || null,
   };
 })();

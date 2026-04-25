@@ -65,9 +65,10 @@ const LeaveManager = (() => {
         </div>`;
       }).join('');
 
-      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}">
-        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}"><span class="rm-date-num">${d}</span></td>
-        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}">${DAY_NAMES[dow]}</td>
+      const holidayName = RosterEngine.getHolidayName(date);
+      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}${holidayName ? ' rm-holiday' : ''}">
+        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}${holidayName ? ' rm-holiday-date' : ''}"><span class="rm-date-num">${d}</span>${holidayName ? '<span class="rm-holiday-dot"></span>' : ''}</td>
+        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}" title="${holidayName || ''}">${DAY_NAMES[dow]}${holidayName ? `<span class="rm-holiday-tag">${holidayName}</span>` : ''}</td>
         <td class="rm-cell" style="padding:.3rem .5rem">
           ${chips || '<span class="rm-unassigned">—</span>'}
         </td>
@@ -172,12 +173,13 @@ const LeaveManager = (() => {
         ? `onclick="document.getElementById('leave-date-input').value='${date}';document.getElementById('leave-apply-form').scrollIntoView({behavior:'smooth',block:'nearest'})"`
         : '';
 
-      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}">
-        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}" ${freeClick} style="${!leave ? 'cursor:pointer' : ''}">
-          <span class="rm-date-num">${d}</span>
+      const holidayName = RosterEngine.getHolidayName(date);
+      html += `<tr class="rm-row${isTdy ? ' rm-today' : ''}${isWknd ? ' rm-weekend' : ''}${holidayName ? ' rm-holiday' : ''}">
+        <td class="rm-date-cell${isTdy ? ' rm-today' : ''}${holidayName ? ' rm-holiday-date' : ''}" ${freeClick} style="${!leave ? 'cursor:pointer' : ''}">
+          <span class="rm-date-num">${d}</span>${holidayName ? '<span class="rm-holiday-dot"></span>' : ''}
         </td>
-        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}" ${freeClick} style="${!leave ? 'cursor:pointer' : ''}">
-          ${DAY_NAMES[dow]}
+        <td class="rm-dayname-cell${isWknd ? ' rm-wknd-text' : ''}" ${freeClick} style="${!leave ? 'cursor:pointer' : ''}" title="${holidayName || ''}">
+          ${DAY_NAMES[dow]}${holidayName ? `<span class="rm-holiday-tag">${holidayName}</span>` : ''}
         </td>
         <td class="rm-cell" style="padding:.3rem .6rem" ${freeClick}>
           ${statusChip}

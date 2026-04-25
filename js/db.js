@@ -151,8 +151,8 @@ const DB = (() => {
   // Effective off-days: PGR's own take precedence per day; SR's apply where PGR hasn't set
   function getEffectiveOffDays(pgrId) {
     const pref = getPrefForPGR(pgrId);
-    const own  = new Set(pref.offDays || []);
-    const sr   = pref.srOffDays || [];
+    const own  = new Set((pref.offDays || []).filter(Boolean));
+    const sr   = (pref.srOffDays || []).filter(Boolean);
     return [...own, ...sr.filter(d => !own.has(d))];
   }
 
@@ -231,7 +231,7 @@ const DB = (() => {
 
   // ── ROSTER ─────────────────────────────────────────────
   function getRoster()          { return C.roster; }
-  function getRosterForMonth(ym)  { return C.roster.filter(r => r.date.startsWith(ym)); }
+  function getRosterForMonth(ym)  { return C.roster.filter(r => r.date?.startsWith(ym)); }
   function getRosterForDate(date) { return C.roster.filter(r => r.date === date); }
 
   async function assignShift(entry) {
@@ -284,7 +284,7 @@ const DB = (() => {
 
   async function clearRosterForMonth(ym) {
     const entries = getRosterForMonth(ym);
-    C.roster = C.roster.filter(r => !r.date.startsWith(ym));
+    C.roster = C.roster.filter(r => !r.date?.startsWith(ym));
     const batch = fs().batch();
     entries.forEach(e => batch.delete(fs().collection('roster').doc(e.id)));
     await batch.commit();
@@ -306,7 +306,7 @@ const DB = (() => {
   // ── LEAVES ─────────────────────────────────────────────
   function getLeaves()            { return C.leaves; }
   function getLeavesForPGR(pgrId)   { return C.leaves.filter(l => l.pgrId === pgrId); }
-  function getLeavesForMonth(ym)    { return C.leaves.filter(l => l.date.startsWith(ym)); }
+  function getLeavesForMonth(ym)    { return C.leaves.filter(l => l.date?.startsWith(ym)); }
   function getLeavesForDate(date)   { return C.leaves.filter(l => l.date === date && l.status === 'approved'); }
   function isOnLeave(pgrId, date)   {
     return C.leaves.some(l => l.pgrId === pgrId && l.date === date && l.status === 'approved');
@@ -395,16 +395,77 @@ const DB = (() => {
     await fs().collection('prefs').doc(pgrId).set(updated, { merge: true });
   }
 
-  // Returns the weekend quota for a PGR (defaults to 0 for each slot type).
+  // Returns per-year weekend quota map: { 1:{satDay,satNight,sunDay,sunNight}, 2:{...}, … }
+  // Falls back to flat weekendQuotas (legacy) for all years if yearWeekendQuotas not yet saved.
+  function getYearWeekendQuotas() {
+    const cfg    = getConfig();
+    const years  = getYears();
+    const stored = cfg.yearWeekendQuotas || {};
+    const flat   = cfg.weekendQuotas     || {};  // backward compat
+    const empty  = { satDay: 0, satNight: 0, sunDay: 0, sunNight: 0 };
+    const result = {};
+    years.forEach(y => {
+      const base = stored[y] || flat || empty;
+      result[y] = {
+        satDay:   Number(base.satDay   ?? 0),
+        satNight: Number(base.satNight ?? 0),
+        sunDay:   Number(base.sunDay   ?? 0),
+        sunNight: Number(base.sunNight ?? 0),
+      };
+    });
+    return result;
+  }
+
+  async function saveYearWeekendQuotas(map) {
+    const cfg = getConfig();
+    cfg.yearWeekendQuotas = map;
+    await saveConfig(cfg);
+  }
+
+  // Returns the global quota for a specific training year (or zeros if not set).
+  function getGlobalWeekendQuotasForYear(year) {
+    const yq = getYearWeekendQuotas();
+    return yq[year] || { satDay: 0, satNight: 0, sunDay: 0, sunNight: 0 };
+  }
+
+  // Legacy flat getter — returns first year's values or zeros (kept for any callers not yet updated).
+  function getGlobalWeekendQuotas() {
+    const yq    = getYearWeekendQuotas();
+    const years = getYears();
+    return yq[years[0]] || { satDay: 0, satNight: 0, sunDay: 0, sunNight: 0 };
+  }
+
+  // Saves global weekend quotas into config/main.
+  async function saveGlobalWeekendQuotas(quotas) {
+    const cfg = getConfig();
+    cfg.weekendQuotas = quotas;
+    await saveConfig(cfg);
+  }
+
+  // Returns the effective weekend quota for a PGR.
+  // Per-PGR override takes precedence; otherwise falls back to the PGR's year-specific global.
   function getWeekendQuotasForPGR(pgrId) {
     const pref = getPrefForPGR(pgrId);
-    const q    = pref.weekendQuotas || {};
+    const pgr  = getPGR(pgrId);
+    const globalForYear = getGlobalWeekendQuotasForYear(pgr?.year);
+    // null or undefined means no per-PGR override — fall back to year-specific global
+    if (pref.weekendQuotas == null) return { ...globalForYear };
+    const q = pref.weekendQuotas;
     return {
-      satDay:   Number(q.satDay   ?? 0),
-      satNight: Number(q.satNight ?? 0),
-      sunDay:   Number(q.sunDay   ?? 0),
-      sunNight: Number(q.sunNight ?? 0),
+      satDay:   Number(q.satDay   ?? globalForYear.satDay),
+      satNight: Number(q.satNight ?? globalForYear.satNight),
+      sunDay:   Number(q.sunDay   ?? globalForYear.sunDay),
+      sunNight: Number(q.sunNight ?? globalForYear.sunNight),
     };
+  }
+
+  // Clears the per-PGR override so the PGR reverts to global defaults.
+  async function clearWeekendQuotasForPGR(pgrId) {
+    const existing = C.prefs.find(p => p.pgrId === pgrId) || { pgrId, offDays: [] };
+    const updated  = { ...existing, weekendQuotas: null };
+    C.prefs = C.prefs.filter(p => p.pgrId !== pgrId);
+    C.prefs.push(updated);
+    await fs().collection('prefs').doc(pgrId).set(updated, { merge: true });
   }
 
   // ── ALERTS ─────────────────────────────────────────────
@@ -465,7 +526,9 @@ const DB = (() => {
     isOnLeave, applyLeave, addLeave, updateLeaveStatus, deleteLeave,
     // Prefs
     getAllPrefs, getPrefForPGR, savePrefForPGR, saveSRPrefsForPGR, saveBayPrioritiesForPGR, saveExcludedBaysForPGR,
-    saveWeekendQuotasForPGR, getWeekendQuotasForPGR,
+    getYearWeekendQuotas, saveYearWeekendQuotas, getGlobalWeekendQuotasForYear,
+    getGlobalWeekendQuotas, saveGlobalWeekendQuotas,
+    saveWeekendQuotasForPGR, getWeekendQuotasForPGR, clearWeekendQuotasForPGR,
     // Alerts
     getAlerts, addAlert, markAlertsSeen, clearAlerts, unseenAlertCount,
     // Carry forward
